@@ -10,7 +10,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [ready, setReady] = useState(pathname === "/login");
+  const [ready, setReady] = useState(() => {
+    if (pathname === "/login") return true;
+    return !!getAdminToken();
+  });
 
   useEffect(() => {
     if (pathname === "/login") {
@@ -49,7 +52,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       <Toaster theme="dark" />
       <Nav />
-      <main className="flex-1 overflow-auto p-8">{children}</main>
+      <main aria-label="Main content" className="flex-1 overflow-auto p-8">{children}</main>
     </div>
   );
 }

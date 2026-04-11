@@ -679,17 +679,29 @@ def get_run_log_classifications(run_log_id: int) -> List[dict[str, Any]]:
 @protected.get("/inboxes/{inbox_id}/classifications")
 def get_inbox_classifications(
     inbox_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
     category: Optional[str] = Query(None),
     since: Optional[str] = Query(None),
     until: Optional[str] = Query(None),
 ) -> dict[str, Any]:
-    """Return per-email classifications for an inbox with optional filters."""
+    """Return per-email classifications for an inbox with optional filters and server-side pagination."""
     with db.get_connection() as conn:
         if not db.get_inbox_by_id(conn, inbox_id):
             raise HTTPException(status_code=404, detail="Inbox not found.")
         return db.list_message_classifications_by_inbox(
-            conn, inbox_id, category=category, since=since, until=until
+            conn, inbox_id, category=category, since=since, until=until,
+            page=page, page_size=page_size,
         )
+
+
+@protected.get("/inboxes/{inbox_id}/classifications/categories")
+def get_inbox_classification_categories(inbox_id: int) -> List[str]:
+    """Return distinct category values for an inbox (for filter dropdowns)."""
+    with db.get_connection() as conn:
+        if not db.get_inbox_by_id(conn, inbox_id):
+            raise HTTPException(status_code=404, detail="Inbox not found.")
+        return db.list_distinct_categories_by_inbox(conn, inbox_id)
 
 
 # --- Export / Import ---

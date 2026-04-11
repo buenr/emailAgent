@@ -1,7 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiSend, getAdminToken } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiGet, apiSend } from "@/lib/api";
+import type {
+  Named,
+  TaxRow,
+  TimeWindowMode,
+  SubjectKeywordMode,
+  AttachmentFilter,
+  FetchFilter,
+  SubjectRuleRow,
+  Inbox,
+  ClassificationSetDetail,
+  AppModelRow,
+  RunLogRow,
+  ClassificationRow,
+  PaginatedResponse,
+} from "@/lib/types";
 import { toast } from "sonner";
 import { PlayIcon } from "lucide-react";
 
@@ -65,57 +80,6 @@ function snapPolling(n: number): number {
     Math.abs(x - n) < Math.abs(best - n) ? x : best
   );
 }
-
-type TimeWindowMode = "local_today" | "rolling_hours" | "since_last_run";
-type SubjectKeywordMode = "all" | "any";
-type AttachmentFilter = "any" | "yes" | "no";
-
-type FetchFilter = {
-  unread_only: boolean;
-  time_window_mode: TimeWindowMode;
-  rolling_hours: number | null;
-  sender_allowlist: string[];
-  sender_denylist: string[];
-  subject_keywords: string[];
-  subject_keyword_mode: SubjectKeywordMode;
-  body_keywords: string[];
-  importance_levels: string[];
-  has_attachments: AttachmentFilter;
-  category_include_any: string[];
-  category_exclude_any: string[];
-};
-
-type SubjectRuleRow = { pattern: string; category: string };
-
-type Inbox = {
-  id: number;
-  mailbox_id: string;
-  prompt_template_id: number;
-  classification_set_id: number;
-  app_model_id?: number | null;
-  app_model_name?: string;
-  timezone: string;
-  mail_folder: string;
-  max_messages_per_run: number | null;
-  patch_max_workers: number;
-  polling_interval_minutes?: number;
-  is_active?: boolean;
-  graph_write_back_enabled?: boolean;
-  subject_classify_enabled?: boolean;
-  subject_classify_rules?: SubjectRuleRow[];
-  prompt_name?: string;
-  classification_set_name?: string;
-  fetch_filter?: FetchFilter | null;
-  eta_lookup_enabled?: boolean;
-  eta_lookup_api_url?: string;
-  eta_lookup_api_key?: string;
-  eta_draft_enabled?: boolean;
-};
-
-type SetTaxonomyRow = { name: string; description: string };
-type ClassificationSetDetail = { id: number; name: string; categories: SetTaxonomyRow[] };
-
-type AppModelRow = { id: number; name: string };
 
 /** Parse select value: only `""` → null or a decimal string that round-trips as a safe integer. */
 function parseAppModelSelectValue(raw: string): number | null {
@@ -201,39 +165,6 @@ function mergeFetchFilter(raw: unknown): FetchFilter {
   };
 }
 
-type Named = { id: number; name: string };
-
-type RunLogRow = {
-  id: number;
-  status: string;
-  fetched_count: number;
-  classified_count: number;
-  tagged_count: number;
-  failures: number;
-  latency_ms: number;
-  total_tokens_used: number | null;
-  error_message: string | null;
-  created_at: string;
-};
-
-type LogClassificationRow = {
-  id: number;
-  run_log_id: number;
-  email_id: string;
-  subject: string;
-  sender: string;
-  category: string;
-  received_at: string;
-  created_at: string;
-};
-
-type InboxListResponse = {
-  items: Inbox[];
-  total: number;
-  page: number;
-  page_size: number;
-};
-
 const INBOX_LIST_PAGE_SIZE = 25;
 
 export default function InboxesPage() {
@@ -250,11 +181,16 @@ export default function InboxesPage() {
   const [runLogs, setRunLogs] = useState<RunLogRow[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logDetail, setLogDetail] = useState<RunLogRow | null>(null);
-  const [logClassifications, setLogClassifications] = useState<LogClassificationRow[]>([]);
+  const [logClassifications, setLogClassifications] = useState<ClassificationRow[]>([]);
   const [logClassificationsLoading, setLogClassificationsLoading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [runNowDialogOpen, setRunNowDialogOpen] = useState(false);
   const [runNowLoading, setRunNowLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  /** Ref to track which selectedId the form was last populated for,
+   *  so we don't overwrite user edits on re-renders / data reloads. */
+  const lastPopulatedIdRef = useRef<number | "new" | null>(null);
 
   // Form state
   const [mailboxId, setMailboxId] = useState("");
@@ -272,7 +208,7 @@ export default function InboxesPage() {
   const [subjectRules, setSubjectRules] = useState<SubjectRuleRow[]>([
     { pattern: "", category: "" },
   ]);
-  const [setTaxonomy, setSetTaxonomy] = useState<SetTaxonomyRow[]>([]);
+  const [setTaxonomy, setSetTaxonomy] = useState<TaxRow[]>([]);
   const [fetchFilter, setFetchFilter] = useState<FetchFilter>(defaultFetchFilter);
   const [ffLines, setFfLines] = useState({
     allow: "",
@@ -293,7 +229,7 @@ export default function InboxesPage() {
     setError(null);
     try {
       const [ib, pr, st, am] = await Promise.all([
-        apiGet<InboxListResponse>(
+        apiGet<PaginatedResponse<Inbox>>(
           `/api/inboxes?page=${page}&page_size=${INBOX_LIST_PAGE_SIZE}`
         ),
         apiGet<Named[]>("/api/prompt-templates"),
@@ -313,7 +249,7 @@ export default function InboxesPage() {
           return prev;
         }
         if (!ib.items.length) return "new";
-        return ib.items[0].id;
+        return ib.items[0]!.id;
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load";
@@ -328,31 +264,9 @@ export default function InboxesPage() {
     void fetchLists(listPage);
   }, [listPage, fetchLists]);
 
-  useEffect(() => {
-    if (selectedId === "new" || selectedId === null) {
-      setDetail(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const d = await apiGet<Inbox>(`/api/inboxes/${selectedId}`);
-        if (!cancelled) setDetail(d);
-      } catch {
-        if (!cancelled) setDetail(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (selectedId === "new" || selectedId === null) return;
-    if (detail?.id === selectedId) return;
+  /** Set form fields to default values (for "new" or loading state). */
+  const resetFormToDefaults = useCallback(() => {
     setMailboxId("");
-    if (prompts.length) setPromptId(prompts[0].id);
-    if (sets.length) setSetId(sets[0].id);
     setTimezone("UTC");
     setMailFolder("inbox");
     setMaxMessages(500);
@@ -369,75 +283,111 @@ export default function InboxesPage() {
     setEtaLookupApiUrl("");
     setEtaLookupApiKey("");
     setEtaDraftEnabled(true);
-  }, [selectedId, detail, prompts, sets]);
+  }, []);
 
+  /**
+   * Single consolidated effect for form synchronization.
+   *
+   * - When selectedId changes → reset ref, clear detail, reset form or fetch detail
+   * - When detail arrives for the current selectedId → populate form (once per selectedId)
+   * - Does NOT depend on `prompts` or `sets`, preventing spurious resets during CRUD
+   */
   useEffect(() => {
-    if (selectedId === "new") {
-      setMailboxId("");
-      if (prompts.length) setPromptId(prompts[0].id);
-      if (sets.length) setSetId(sets[0].id);
-      setTimezone("UTC");
-      setMailFolder("inbox");
-      setMaxMessages(500);
-      setWorkers(4);
-      setPolling(5);
-      setIsActive(true);
-      setAppModelId(null);
-      setGraphWriteBackEnabled(true);
-      setSubjectClassifyEnabled(false);
-      setSubjectRules([{ pattern: "", category: "" }]);
-      setFetchFilter(defaultFetchFilter());
-      setFfLines({ allow: "", deny: "", subj: "", body: "", catIn: "", catEx: "" });
-      setEtaLookupEnabled(false);
-      setEtaLookupApiUrl("");
-      setEtaLookupApiKey("");
-      setEtaDraftEnabled(true);
-      setRunLogs([]);
-    } else if (selectedId !== null && detail && detail.id === selectedId) {
-      setMailboxId(detail.mailbox_id);
-      setPromptId(detail.prompt_template_id);
-      setSetId(detail.classification_set_id);
-      setTimezone(
-        detail.timezone && COMMON_TIMEZONES.includes(detail.timezone)
-          ? detail.timezone
-          : "UTC"
-      );
-      setMailFolder(detail.mail_folder);
-      setMaxMessages(detail.max_messages_per_run ?? 500);
-      setWorkers(detail.patch_max_workers);
-      setPolling(snapPolling(detail.polling_interval_minutes ?? 5));
-      setIsActive(detail.is_active !== false);
-      setAppModelId(coerceAppModelIdFromApi(detail.app_model_id));
-      setGraphWriteBackEnabled(detail.graph_write_back_enabled !== false);
-      setSubjectClassifyEnabled(detail.subject_classify_enabled === true);
-      const sr = detail.subject_classify_rules;
-      if (Array.isArray(sr) && sr.length > 0) {
-        setSubjectRules(
-          sr.map((r) => ({
-            pattern: typeof r.pattern === "string" ? r.pattern : "",
-            category: typeof r.category === "string" ? r.category : "",
-          }))
-        );
-      } else {
-        setSubjectRules([{ pattern: "", category: "" }]);
-      }
-      const merged = mergeFetchFilter(detail.fetch_filter);
-      setFetchFilter(merged);
-      setFfLines({
-        allow: merged.sender_allowlist.join("\n"),
-        deny: merged.sender_denylist.join("\n"),
-        subj: merged.subject_keywords.join("\n"),
-        body: merged.body_keywords.join("\n"),
-        catIn: merged.category_include_any.join("\n"),
-        catEx: merged.category_exclude_any.join("\n"),
-      });
-      // ETA Pipeline
-      setEtaLookupEnabled(detail.eta_lookup_enabled === true);
-      setEtaLookupApiUrl(detail.eta_lookup_api_url ?? "");
-      setEtaLookupApiKey(detail.eta_lookup_api_key ?? "");
-      setEtaDraftEnabled(detail.eta_draft_enabled !== false);
+    // selectedId changed → mark form as not yet populated for this ID
+    lastPopulatedIdRef.current = null;
+
+    if (selectedId === null) {
+      setDetail(null);
+      return;
     }
-  }, [selectedId, detail, prompts, sets]);
+
+    if (selectedId === "new") {
+      setDetail(null);
+      resetFormToDefaults();
+      // Pick first prompt/set from current lists (stable reads, not deps)
+      setPromptId(prompts[0]?.id ?? 0);
+      setSetId(sets[0]?.id ?? 0);
+      setRunLogs([]);
+      lastPopulatedIdRef.current = "new";
+      return;
+    }
+
+    // selectedId is a number — fetch detail if not already loaded
+    setDetail(null);
+    resetFormToDefaults();
+    // Use current prompt/set defaults while loading
+    setPromptId(prompts[0]?.id ?? 0);
+    setSetId(sets[0]?.id ?? 0);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await apiGet<Inbox>(`/api/inboxes/${selectedId}`);
+        if (!cancelled) setDetail(d);
+      } catch {
+        if (!cancelled) setDetail(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  /** Populate form when detail arrives for the current selectedId (runs on detail change). */
+  useEffect(() => {
+    if (selectedId === null || selectedId === "new") return;
+    // Only populate if detail is loaded and matches selectedId, and we haven't already populated for this ID
+    if (!detail || detail.id !== selectedId) return;
+    if (lastPopulatedIdRef.current === selectedId) return; // already populated
+
+    // Populate form from detail
+    setMailboxId(detail.mailbox_id);
+    setPromptId(detail.prompt_template_id);
+    setSetId(detail.classification_set_id);
+    setTimezone(
+      detail.timezone && COMMON_TIMEZONES.includes(detail.timezone)
+        ? detail.timezone
+        : "UTC"
+    );
+    setMailFolder(detail.mail_folder);
+    setMaxMessages(detail.max_messages_per_run ?? 500);
+    setWorkers(detail.patch_max_workers);
+    setPolling(snapPolling(detail.polling_interval_minutes ?? 5));
+    setIsActive(detail.is_active !== false);
+    setAppModelId(coerceAppModelIdFromApi(detail.app_model_id));
+    setGraphWriteBackEnabled(detail.graph_write_back_enabled !== false);
+    setSubjectClassifyEnabled(detail.subject_classify_enabled === true);
+    const sr = detail.subject_classify_rules;
+    if (Array.isArray(sr) && sr.length > 0) {
+      setSubjectRules(
+        sr.map((r) => ({
+          pattern: typeof r.pattern === "string" ? r.pattern : "",
+          category: typeof r.category === "string" ? r.category : "",
+        }))
+      );
+    } else {
+      setSubjectRules([{ pattern: "", category: "" }]);
+    }
+    const merged = mergeFetchFilter(detail.fetch_filter);
+    setFetchFilter(merged);
+    setFfLines({
+      allow: merged.sender_allowlist.join("\n"),
+      deny: merged.sender_denylist.join("\n"),
+      subj: merged.subject_keywords.join("\n"),
+      body: merged.body_keywords.join("\n"),
+      catIn: merged.category_include_any.join("\n"),
+      catEx: merged.category_exclude_any.join("\n"),
+    });
+    // ETA Pipeline
+    setEtaLookupEnabled(detail.eta_lookup_enabled === true);
+    setEtaLookupApiUrl(detail.eta_lookup_api_url ?? "");
+    setEtaLookupApiKey(detail.eta_lookup_api_key ?? "");
+    setEtaDraftEnabled(detail.eta_draft_enabled !== false);
+
+    // Mark as populated so subsequent detail changes (e.g. from re-fetch) don't overwrite user edits
+    lastPopulatedIdRef.current = selectedId;
+  }, [selectedId, detail]);
 
   useEffect(() => {
     if (selectedId === "new" || !selectedId) {
@@ -472,7 +422,7 @@ export default function InboxesPage() {
     (async () => {
       setLogClassificationsLoading(true);
       try {
-        const rows = await apiGet<LogClassificationRow[]>(
+        const rows = await apiGet<ClassificationRow[]>(
           `/api/run-logs/${logDetail.id}/classifications`
         );
         if (!cancelled) setLogClassifications(rows);
@@ -508,6 +458,25 @@ export default function InboxesPage() {
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    // Client-side validation
+    if (!mailboxId.trim()) {
+      toast.error("Mailbox ID is required");
+      return;
+    }
+    if (!promptId || promptId <= 0) {
+      toast.error("A prompt template must be selected");
+      return;
+    }
+    if (!setId || setId <= 0) {
+      toast.error("A classification set must be selected");
+      return;
+    }
+    if (!maxMessages || maxMessages <= 0) {
+      toast.error("Max messages per run must be greater than 0");
+      return;
+    }
+
     const lineParse = (s: string) =>
       s
         .split("\n")
@@ -554,17 +523,18 @@ export default function InboxesPage() {
       eta_draft_enabled: etaDraftEnabled,
     };
 
+    setSaving(true);
     try {
       if (selectedId === "new") {
         const created = await apiSend<{ id: number }>("/api/inboxes", "POST", payload);
+        // Mark form as not-yet-populated for the new ID so detail-load effect can populate it
+        lastPopulatedIdRef.current = null;
         setSelectedId(created.id);
-        setLoading(true);
         if (listPage !== 1) setListPage(1);
         else await fetchLists(1);
         toast.success("Inbox mapping created");
       } else if (selectedId) {
         await apiSend(`/api/inboxes/${selectedId}`, "PUT", payload);
-        setLoading(true);
         await fetchLists(listPage);
         toast.success("Inbox mapping saved");
       }
@@ -572,6 +542,8 @@ export default function InboxesPage() {
       const msg = err instanceof Error ? err.message : "Save failed";
       setError(msg);
       toast.error(msg);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -579,16 +551,19 @@ export default function InboxesPage() {
     if (selectedId === "new" || !selectedId) return;
     setDeleteDialogOpen(false);
     setError(null);
+    setSaving(true);
     try {
       await apiSend(`/api/inboxes/${selectedId}`, "DELETE");
+      lastPopulatedIdRef.current = null;
       setSelectedId(null);
-      setLoading(true);
       await fetchLists(listPage);
       toast.success("Inbox mapping deleted");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Delete failed";
       setError(msg);
       toast.error(msg);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -596,33 +571,19 @@ export default function InboxesPage() {
     if (typeof selectedId !== "number") return;
     setRunNowLoading(true);
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000"}/api/inboxes/${selectedId}/run`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(typeof window !== "undefined" && getAdminToken()
-              ? { Authorization: `Bearer ${getAdminToken()}` }
-              : {}),
-          },
-        }
+      const res = await apiSend<{ detail?: string }>(
+        `/api/inboxes/${selectedId}/run`,
+        "POST"
       );
-      if (res.status === 202) {
-        toast.success("Classification run started");
-      } else if (res.status === 409) {
-        toast.warning("A run is already in progress");
-      } else if (!res.ok) {
-        let detail = res.statusText;
-        try {
-          const j = await res.json();
-          if (typeof j.detail === "string") detail = j.detail;
-        } catch { /* ignore */ }
-        toast.error(detail);
-      }
+      // apiSend throws on non-2xx, so if we get here the run started
+      toast.success("Classification run started");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Run failed";
-      toast.error(msg);
+      if (msg.toLowerCase().includes("already in progress") || msg.toLowerCase().includes("conflict")) {
+        toast.warning("A run is already in progress");
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setRunNowLoading(false);
       setRunNowDialogOpen(false);
@@ -828,6 +789,10 @@ export default function InboxesPage() {
                     <ShadcnTableRow
                       key={i.id}
                       onClick={() => setSelectedId(i.id)}
+                      tabIndex={0}
+                      role="button"
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedId(i.id); } }}
+                      aria-selected={selectedId === i.id}
                       className={`cursor-pointer hover:bg-slate-900/40 ${
                         selectedId === i.id ? "bg-slate-800/50" : ""
                       }`}
@@ -883,8 +848,9 @@ export default function InboxesPage() {
         <form onSubmit={onSave} className="space-y-6">
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Label className="mb-1 block text-sm text-slate-400">Mailbox ID (UPN/SMTP)</Label>
+              <Label htmlFor="inbox-mailbox" className="mb-1 block text-sm text-slate-400">Mailbox ID (UPN/SMTP)</Label>
               <Input
+                id="inbox-mailbox"
                 value={mailboxId}
                 onChange={(e) => setMailboxId(e.target.value)}
                 placeholder="user@example.com"
@@ -892,14 +858,14 @@ export default function InboxesPage() {
             </div>
 
             <div>
-              <Label className="mb-1 block text-sm text-slate-400">Prompt Template</Label>
+              <Label id="inbox-prompt-label" className="mb-1 block text-sm text-slate-400">Prompt Template</Label>
               <Select
                 value={String(promptId)}
                 onValueChange={(val) => {
                   if (val !== null) setPromptId(Number(val));
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full" aria-labelledby="inbox-prompt-label">
                   <SelectValue placeholder="Select template" />
                 </SelectTrigger>
                 <SelectContent>
@@ -913,14 +879,14 @@ export default function InboxesPage() {
             </div>
 
             <div>
-              <Label className="mb-1 block text-sm text-slate-400">Classification Set</Label>
+              <Label id="inbox-set-label" className="mb-1 block text-sm text-slate-400">Classification Set</Label>
               <Select
                 value={String(setId)}
                 onValueChange={(val) => {
                   if (val !== null) setSetId(Number(val));
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full" aria-labelledby="inbox-set-label">
                   <SelectValue placeholder="Select set" />
                 </SelectTrigger>
                 <SelectContent>
@@ -934,14 +900,14 @@ export default function InboxesPage() {
             </div>
 
             <div>
-              <Label className="mb-1 block text-sm text-slate-400">Gemini model</Label>
+              <Label id="inbox-model-label" className="mb-1 block text-sm text-slate-400">Gemini model</Label>
               <Select
                 value={appModelId === null ? "__none__" : String(appModelId)}
                 onValueChange={(val) =>
                   setAppModelId(val === "__none__" || val === null ? null : parseAppModelSelectValue(val))
                 }
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full" aria-labelledby="inbox-model-label">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -963,14 +929,14 @@ export default function InboxesPage() {
             </div>
 
             <div>
-              <Label className="mb-1 block text-sm text-slate-400">Timezone</Label>
+              <Label id="inbox-timezone-label" className="mb-1 block text-sm text-slate-400">Timezone</Label>
               <Select
                 value={timezone}
                 onValueChange={(val) => {
                   if (val !== null) setTimezone(val);
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full" aria-labelledby="inbox-timezone-label">
                   <SelectValue placeholder="Select timezone" />
                 </SelectTrigger>
                 <SelectContent>
@@ -984,20 +950,22 @@ export default function InboxesPage() {
             </div>
 
             <div>
-              <Label className="mb-1 block text-sm text-slate-400">Mail Folder</Label>
+              <Label htmlFor="inbox-mail-folder" className="mb-1 block text-sm text-slate-400">Mail Folder</Label>
               <Input
+                id="inbox-mail-folder"
                 value={mailFolder}
                 onChange={(e) => setMailFolder(e.target.value)}
               />
             </div>
 
             <div>
-              <Label className="mb-1 block text-sm text-slate-400">
+              <Label id="inbox-poll-interval-label" className="mb-1 block text-sm text-slate-400">
                 Polling interval: Every {polling} minutes
               </Label>
               <Slider
+                aria-labelledby="inbox-poll-interval-label"
                 value={[POLLING_OPTIONS.indexOf(polling)]}
-                onValueChange={(val) => setPolling(POLLING_OPTIONS[Array.isArray(val) ? val[0] : val])}
+                onValueChange={(val) => setPolling(POLLING_OPTIONS[Array.isArray(val) ? val[0]! : val] ?? polling)}
                 min={0}
                 max={POLLING_OPTIONS.length - 1}
                 step={1}
@@ -1005,8 +973,9 @@ export default function InboxesPage() {
             </div>
 
             <div>
-              <Label className="mb-1 block text-sm text-slate-400">Max Messages Per Run</Label>
+              <Label htmlFor="inbox-max-messages" className="mb-1 block text-sm text-slate-400">Max Messages Per Run</Label>
               <Input
+                id="inbox-max-messages"
                 type="number"
                 min={1}
                 value={maxMessages}
@@ -1015,10 +984,11 @@ export default function InboxesPage() {
             </div>
 
             <div>
-              <Label className="mb-1 block text-sm text-slate-400">
+              <Label id="inbox-workers-label" className="mb-1 block text-sm text-slate-400">
                 Patch Max Workers: {workers}
               </Label>
               <Slider
+                aria-labelledby="inbox-workers-label"
                 value={[workers]}
                 onValueChange={(val) => setWorkers(Array.isArray(val) ? val[0] : val)}
                 min={1}
@@ -1030,6 +1000,7 @@ export default function InboxesPage() {
             <div className="flex items-center">
               <Label className="flex cursor-pointer items-center gap-2 text-sm font-normal text-slate-300">
                 <Checkbox
+                  id="inbox-active"
                   checked={isActive}
                   onCheckedChange={(checked) => setIsActive(checked)}
                 />
@@ -1040,6 +1011,7 @@ export default function InboxesPage() {
             <div className="sm:col-span-2">
               <Label className="flex cursor-pointer items-center gap-2 text-sm font-normal text-slate-300">
                 <Checkbox
+                  id="inbox-graph-write-back"
                   checked={graphWriteBackEnabled}
                   onCheckedChange={(checked) => setGraphWriteBackEnabled(checked)}
                 />
@@ -1054,6 +1026,7 @@ export default function InboxesPage() {
             <div className="sm:col-span-2 rounded-md border border-slate-800 bg-slate-950/30 px-4 py-4">
               <Label className="mb-2 flex cursor-pointer items-center gap-2 text-sm font-normal text-slate-300">
                 <Checkbox
+                  id="inbox-subject-classify"
                   checked={subjectClassifyEnabled}
                   onCheckedChange={(checked) => setSubjectClassifyEnabled(checked)}
                 />
@@ -1073,8 +1046,9 @@ export default function InboxesPage() {
                       className="flex flex-col gap-2 rounded-md border border-slate-800/80 bg-slate-950/50 p-3 sm:flex-row sm:items-end"
                     >
                       <div className="min-w-0 flex-1">
-                        <Label className="mb-1 block text-xs font-normal text-slate-500">Subject pattern (LIKE)</Label>
+                        <Label htmlFor={`inbox-subject-pattern-${idx}`} className="mb-1 block text-xs font-normal text-slate-500">Subject pattern (LIKE)</Label>
                         <Input
+                          id={`inbox-subject-pattern-${idx}`}
                           className="font-mono"
                           placeholder="%Automated%"
                           value={row.pattern}
@@ -1087,7 +1061,7 @@ export default function InboxesPage() {
                         />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <Label className="mb-1 block text-xs font-normal text-slate-500">Classification label</Label>
+                        <Label id={`inbox-subject-category-label-${idx}`} className="mb-1 block text-xs font-normal text-slate-500">Classification label</Label>
                         <Select
                           value={row.category || "__none__"}
                           onValueChange={(val) => {
@@ -1097,7 +1071,7 @@ export default function InboxesPage() {
                             );
                           }}
                         >
-                          <SelectTrigger className="w-full">
+                          <SelectTrigger className="w-full" aria-labelledby={`inbox-subject-category-label-${idx}`}>
                             <SelectValue placeholder="— select category —" />
                           </SelectTrigger>
                           <SelectContent>
@@ -1158,6 +1132,7 @@ export default function InboxesPage() {
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <Label className="flex cursor-pointer items-center gap-2 text-sm font-normal text-slate-300 sm:col-span-2">
                 <Checkbox
+                  id="inbox-unread-only"
                   checked={fetchFilter.unread_only}
                   onCheckedChange={(checked) =>
                     setFetchFilter((f) => ({ ...f, unread_only: checked }))
@@ -1167,7 +1142,7 @@ export default function InboxesPage() {
               </Label>
 
               <div>
-                <Label className="mb-1 block text-sm text-slate-400">Time window</Label>
+                <Label id="inbox-time-window-label" className="mb-1 block text-sm text-slate-400">Time window</Label>
                 <Select
                   value={fetchFilter.time_window_mode}
                   onValueChange={(val) => {
@@ -1178,7 +1153,7 @@ export default function InboxesPage() {
                       }));
                   }}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full" aria-labelledby="inbox-time-window-label">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1190,10 +1165,11 @@ export default function InboxesPage() {
               </div>
 
               <div>
-                <Label className="mb-1 block text-sm text-slate-400">
+                <Label htmlFor="inbox-rolling-hours" className="mb-1 block text-sm text-slate-400">
                   Rolling hours (only if window is rolling)
                 </Label>
                 <Input
+                  id="inbox-rolling-hours"
                   type="number"
                   min={1}
                   max={720}
@@ -1209,10 +1185,11 @@ export default function InboxesPage() {
               </div>
 
               <div className="sm:col-span-2">
-                <Label className="mb-1 block text-sm text-slate-400">
+                <Label htmlFor="inbox-sender-allow" className="mb-1 block text-sm text-slate-400">
                   Sender allowlist (optional; if set, only these senders)
                 </Label>
                 <Textarea
+                  id="inbox-sender-allow"
                   rows={3}
                   className="font-mono text-sm"
                   placeholder={"user@company.com\n@vendor.com"}
@@ -1224,8 +1201,9 @@ export default function InboxesPage() {
               </div>
 
               <div className="sm:col-span-2">
-                <Label className="mb-1 block text-sm text-slate-400">Sender denylist</Label>
+                <Label htmlFor="inbox-sender-deny" className="mb-1 block text-sm text-slate-400">Sender denylist</Label>
                 <Textarea
+                  id="inbox-sender-deny"
                   rows={3}
                   className="font-mono text-sm"
                   placeholder={"noreply@…\n@spamdomain.com"}
@@ -1237,8 +1215,9 @@ export default function InboxesPage() {
               </div>
 
               <div>
-                <Label className="mb-1 block text-sm text-slate-400">Subject keywords</Label>
+                <Label htmlFor="inbox-subject-keywords" className="mb-1 block text-sm text-slate-400">Subject keywords</Label>
                 <Textarea
+                  id="inbox-subject-keywords"
                   rows={3}
                   className="font-mono text-sm"
                   value={ffLines.subj}
@@ -1249,7 +1228,7 @@ export default function InboxesPage() {
               </div>
 
               <div>
-                <Label className="mb-1 block text-sm text-slate-400">Subject keyword match</Label>
+                <Label id="inbox-subject-keyword-mode-label" className="mb-1 block text-sm text-slate-400">Subject keyword match</Label>
                 <Select
                   value={fetchFilter.subject_keyword_mode}
                   onValueChange={(val) => {
@@ -1260,7 +1239,7 @@ export default function InboxesPage() {
                       }));
                   }}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full" aria-labelledby="inbox-subject-keyword-mode-label">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1271,10 +1250,11 @@ export default function InboxesPage() {
               </div>
 
               <div className="sm:col-span-2">
-                <Label className="mb-1 block text-sm text-slate-400">
+                <Label htmlFor="inbox-body-keywords" className="mb-1 block text-sm text-slate-400">
                   Body keywords ($search, experimental)
                 </Label>
                 <Textarea
+                  id="inbox-body-keywords"
                   rows={2}
                   className="font-mono text-sm"
                   value={ffLines.body}
@@ -1308,7 +1288,7 @@ export default function InboxesPage() {
               </div>
 
               <div>
-                <Label className="mb-1 block text-sm text-slate-400">Attachments</Label>
+                <Label id="inbox-attachments-label" className="mb-1 block text-sm text-slate-400">Attachments</Label>
                 <Select
                   value={fetchFilter.has_attachments}
                   onValueChange={(val) => {
@@ -1319,7 +1299,7 @@ export default function InboxesPage() {
                       }));
                   }}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full" aria-labelledby="inbox-attachments-label">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1331,10 +1311,11 @@ export default function InboxesPage() {
               </div>
 
               <div>
-                <Label className="mb-1 block text-sm text-slate-400">
+                <Label htmlFor="inbox-cat-include" className="mb-1 block text-sm text-slate-400">
                   Outlook categories (include any)
                 </Label>
                 <Textarea
+                  id="inbox-cat-include"
                   rows={2}
                   className="font-mono text-sm"
                   value={ffLines.catIn}
@@ -1345,10 +1326,11 @@ export default function InboxesPage() {
               </div>
 
               <div>
-                <Label className="mb-1 block text-sm text-slate-400">
+                <Label htmlFor="inbox-cat-exclude" className="mb-1 block text-sm text-slate-400">
                   Outlook categories (exclude any)
                 </Label>
                 <Textarea
+                  id="inbox-cat-exclude"
                   rows={2}
                   className="font-mono text-sm"
                   value={ffLines.catEx}
@@ -1366,6 +1348,7 @@ export default function InboxesPage() {
             <div className="space-y-4">
               <Label className="flex cursor-pointer items-center gap-2 text-sm font-normal text-slate-300">
                 <Checkbox
+                  id="inbox-eta-enabled"
                   checked={etaLookupEnabled}
                   onCheckedChange={(checked) => {
                     const on = !!checked;
@@ -1381,8 +1364,9 @@ export default function InboxesPage() {
 
               <div className="grid gap-4 sm:grid-cols-2 pl-6">
                 <div>
-                  <Label className="mb-1 block text-sm text-slate-400">API URL</Label>
+                  <Label htmlFor="inbox-eta-url" className="mb-1 block text-sm text-slate-400">API URL</Label>
                   <Input
+                    id="inbox-eta-url"
                     placeholder="https://eta-api.example.com/lookup"
                     value={etaLookupApiUrl}
                     onChange={(e) => setEtaLookupApiUrl(e.target.value)}
@@ -1390,8 +1374,9 @@ export default function InboxesPage() {
                   />
                 </div>
                 <div>
-                  <Label className="mb-1 block text-sm text-slate-400">API Key</Label>
+                  <Label htmlFor="inbox-eta-key" className="mb-1 block text-sm text-slate-400">API Key</Label>
                   <Input
+                    id="inbox-eta-key"
                     type="password"
                     placeholder="••••••••"
                     value={etaLookupApiKey}
@@ -1403,6 +1388,7 @@ export default function InboxesPage() {
 
               <Label className="flex cursor-pointer items-center gap-2 text-sm font-normal text-slate-300">
                 <Checkbox
+                  id="inbox-eta-draft"
                   checked={etaDraftEnabled}
                   onCheckedChange={(checked) => setEtaDraftEnabled(!!checked)}
                 />
@@ -1431,8 +1417,12 @@ export default function InboxesPage() {
                 </Button>
               )}
             </div>
-            <Button type="submit">
-              {selectedId === "new" ? "Create Mapping" : "Save Changes"}
+            <Button type="submit" disabled={saving}>
+              {saving
+                ? "Saving…"
+                : selectedId === "new"
+                ? "Create Mapping"
+                : "Save Changes"}
             </Button>
           </div>
         </form>

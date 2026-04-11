@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
+import type {
+  FleetRow,
+  FleetPage,
+  TokenTrendPoint,
+  ClassificationBreakdown,
+  RunVolumePoint,
+} from "@/lib/types";
 import { toast } from "sonner";
 
 import {
@@ -70,42 +77,6 @@ import { Label } from "@/components/ui/label";
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
-type FleetRow = {
-  id: number;
-  mailbox_id: string;
-  polling_interval_minutes: number;
-  is_active: boolean;
-  last_run_at: string | null;
-  next_run_at: string | null;
-  emails_processed_24h: number;
-  token_spend_24h: number;
-  health_ok: boolean;
-  last_run_status?: string | null;
-  last_error_message?: string | null;
-  prompt_name?: string;
-  classification_set_name?: string;
-};
-
-type FleetPage = {
-  items: FleetRow[];
-  total: number;
-  page: number;
-  page_size: number;
-};
-
-type TokenTrendPoint = {
-  date: string;
-  total_tokens: number;
-};
-
-type ClassificationBreakdown = Record<string, number>;
-
-type RunVolumePoint = {
-  date: string;
-  run_count: number;
-  message_count: number;
-};
-
 type TrendRange = 7 | 30;
 
 const FLEET_PAGE_SIZE = 25;
@@ -135,6 +106,15 @@ function ChartTooltipContent({
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  Recharts shared prop constants (avoid recreating objects on render) */
+/* ------------------------------------------------------------------ */
+
+const TICK_STYLE = { fill: "#94a3b8", fontSize: 11 } as const;
+const AXIS_LINE_STYLE = { stroke: "#334155" } as const;
+const CURSOR_STROKE = { stroke: "#475569" } as const;
+const CURSOR_FILL = { fill: "#1e293b" } as const;
 
 /* ------------------------------------------------------------------ */
 /*  Empty chart placeholder                                            */
@@ -175,6 +155,11 @@ export default function FleetDashboardPage() {
 
   /* -- bulk selection state ---------------------------------------- */
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const selectedIdsRef = useRef<Set<number>>(new Set());
+  /* Keep ref in sync so dialog callbacks always read current value */
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkLoading, setBulkLoading] = useState(false);
 
@@ -233,7 +218,7 @@ export default function FleetDashboardPage() {
       setClassBreakdown(c);
       setRunVolume(v);
     } catch {
-      /* Stats are best-effort; don't block the page */
+      toast.error("Failed to load stats");
     }
   }, [trendRange]);
 
@@ -338,13 +323,14 @@ export default function FleetDashboardPage() {
   }
 
   async function handleBulkDelete() {
-    if (selectedIds.size === 0) return;
+    const currentIds = selectedIdsRef.current;
+    if (currentIds.size === 0) return;
     setBulkLoading(true);
     try {
       await apiSend("/api/inboxes/bulk-delete", "POST", {
-        inbox_ids: Array.from(selectedIds),
+        inbox_ids: Array.from(currentIds),
       });
-      toast.success(`Deleted ${selectedIds.size} inbox(es)`);
+      toast.success(`Deleted ${currentIds.size} inbox(es)`);
       setSelectedIds(new Set());
       setDeleteDialogOpen(false);
       loadAll();
@@ -404,9 +390,18 @@ export default function FleetDashboardPage() {
   /*  Derived data                                                     */
   /* ================================================================ */
 
-  const classBreakdownEntries = Object.entries(classBreakdown);
-  const allChecked = rows.length > 0 && rows.every((r) => selectedIds.has(r.id));
-  const someChecked = rows.some((r) => selectedIds.has(r.id)) && !allChecked;
+  const classBreakdownEntries = useMemo(
+    () => Object.entries(classBreakdown),
+    [classBreakdown]
+  );
+  const allChecked = useMemo(
+    () => rows.length > 0 && rows.every((r) => selectedIds.has(r.id)),
+    [rows, selectedIds]
+  );
+  const someChecked = useMemo(
+    () => rows.some((r) => selectedIds.has(r.id)) && !allChecked,
+    [rows, selectedIds, allChecked]
+  );
 
   /* ================================================================ */
   /*  Render: loading                                                  */
@@ -509,40 +504,63 @@ export default function FleetDashboardPage() {
             {tokenTrends.length === 0 ? (
               <ChartEmpty label="No data yet" />
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={tokenTrends}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#334155"
-                    vertical={false}
-                  />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: "#94a3b8", fontSize: 11 }}
-                    axisLine={{ stroke: "#334155" }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fill: "#94a3b8", fontSize: 11 }}
-                    axisLine={{ stroke: "#334155" }}
-                    tickLine={false}
-                    width={60}
-                  />
-                  <Tooltip
-                    content={<ChartTooltipContent />}
-                    cursor={{ stroke: "#475569" }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="total_tokens"
-                    name="Tokens"
-                    stroke="#38bdf8"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4, fill: "#38bdf8" }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              <>
+                <div aria-label="Token spend over time chart showing daily token usage" role="img">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={tokenTrends}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#334155"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="date"
+                        tick={TICK_STYLE}
+                        axisLine={AXIS_LINE_STYLE}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tick={TICK_STYLE}
+                        axisLine={AXIS_LINE_STYLE}
+                        tickLine={false}
+                        width={60}
+                      />
+                      <Tooltip
+                        content={<ChartTooltipContent />}
+                        cursor={CURSOR_STROKE}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="total_tokens"
+                        name="Tokens"
+                        stroke="#38bdf8"
+                        strokeWidth={2}
+                        dot={false}
+                        activeDot={{ r: 4, fill: "#38bdf8" }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="sr-only">
+                  <table>
+                    <caption>Token spend over time: daily total tokens consumed</caption>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Total Tokens</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tokenTrends.map((pt) => (
+                        <tr key={pt.date}>
+                          <td>{pt.date}</td>
+                          <td>{pt.total_tokens.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -559,41 +577,64 @@ export default function FleetDashboardPage() {
             {classBreakdownEntries.length === 0 ? (
               <ChartEmpty label="No data yet" />
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={classBreakdownEntries.map(([category, count]) => ({ category, count }))}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#334155"
-                    vertical={false}
-                  />
-                  <XAxis
-                    dataKey="category"
-                    tick={{ fill: "#94a3b8", fontSize: 11 }}
-                    axisLine={{ stroke: "#334155" }}
-                    tickLine={false}
-                    interval={0}
-                    angle={-30}
-                    textAnchor="end"
-                    height={50}
-                  />
-                  <YAxis
-                    tick={{ fill: "#94a3b8", fontSize: 11 }}
-                    axisLine={{ stroke: "#334155" }}
-                    tickLine={false}
-                    width={40}
-                  />
-                  <Tooltip
-                    content={<ChartTooltipContent />}
-                    cursor={{ fill: "#1e293b" }}
-                  />
-                  <Bar
-                    dataKey="count"
-                    name="Count"
-                    fill="#818cf8"
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
+              <>
+                <div aria-label="Classification breakdown chart showing counts per category" role="img">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={classBreakdownEntries.map(([category, count]) => ({ category, count }))}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#334155"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="category"
+                        tick={TICK_STYLE}
+                        axisLine={AXIS_LINE_STYLE}
+                        tickLine={false}
+                        interval={0}
+                        angle={-30}
+                        textAnchor="end"
+                        height={50}
+                      />
+                      <YAxis
+                        tick={TICK_STYLE}
+                        axisLine={AXIS_LINE_STYLE}
+                        tickLine={false}
+                        width={40}
+                      />
+                      <Tooltip
+                        content={<ChartTooltipContent />}
+                        cursor={CURSOR_FILL}
+                      />
+                      <Bar
+                        dataKey="count"
+                        name="Count"
+                        fill="#818cf8"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="sr-only">
+                  <table>
+                    <caption>Classification breakdown by category</caption>
+                    <thead>
+                      <tr>
+                        <th>Category</th>
+                        <th>Count</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {classBreakdownEntries.map(([category, count]) => (
+                        <tr key={category}>
+                          <td>{category}</td>
+                          <td>{count.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -610,49 +651,74 @@ export default function FleetDashboardPage() {
             {runVolume.length === 0 ? (
               <ChartEmpty label="No data yet" />
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={runVolume}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#334155"
-                    vertical={false}
-                  />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: "#94a3b8", fontSize: 11 }}
-                    axisLine={{ stroke: "#334155" }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fill: "#94a3b8", fontSize: 11 }}
-                    axisLine={{ stroke: "#334155" }}
-                    tickLine={false}
-                    width={40}
-                  />
-                  <Tooltip
-                    content={<ChartTooltipContent />}
-                    cursor={{ stroke: "#475569" }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="run_count"
-                    name="Runs"
-                    stroke="#34d399"
-                    fill="#34d399"
-                    fillOpacity={0.15}
-                    strokeWidth={2}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="message_count"
-                    name="Messages"
-                    stroke="#fbbf24"
-                    fill="#fbbf24"
-                    fillOpacity={0.1}
-                    strokeWidth={2}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+              <>
+                <div aria-label="Run volume chart showing daily runs and messages" role="img">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <AreaChart data={runVolume}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#334155"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="date"
+                        tick={TICK_STYLE}
+                        axisLine={AXIS_LINE_STYLE}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tick={TICK_STYLE}
+                        axisLine={AXIS_LINE_STYLE}
+                        tickLine={false}
+                        width={40}
+                      />
+                      <Tooltip
+                        content={<ChartTooltipContent />}
+                        cursor={CURSOR_STROKE}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="run_count"
+                        name="Runs"
+                        stroke="#34d399"
+                        fill="#34d399"
+                        fillOpacity={0.15}
+                        strokeWidth={2}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="message_count"
+                        name="Messages"
+                        stroke="#fbbf24"
+                        fill="#fbbf24"
+                        fillOpacity={0.1}
+                        strokeWidth={2}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="sr-only">
+                  <table>
+                    <caption>Run volume over time: daily runs and messages</caption>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Runs</th>
+                        <th>Messages</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {runVolume.map((pt) => (
+                        <tr key={pt.date}>
+                          <td>{pt.date}</td>
+                          <td>{pt.run_count.toLocaleString()}</td>
+                          <td>{pt.message_count.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -749,11 +815,31 @@ export default function FleetDashboardPage() {
             <TableHeader>
               <TableRow className="bg-slate-900/50 hover:bg-slate-900/50">
                 <TableHead className="w-[40px]">
-                  <Checkbox
-                    checked={allChecked}
-                    indeterminate={someChecked}
-                    onCheckedChange={toggleAll}
-                  />
+                  {someChecked ? (
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked="mixed"
+                      onClick={() => toggleAll(false)}
+                      className="peer h-4 w-4 shrink-0 rounded-[4px] border border-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground flex items-center justify-center bg-primary text-primary-foreground"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={3}
+                        className="h-3 w-3"
+                      >
+                        <path d="M5 12h14" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <Checkbox
+                      checked={allChecked}
+                      onCheckedChange={toggleAll}
+                    />
+                  )}
                 </TableHead>
                 <TableHead className="text-slate-400">Status</TableHead>
                 <TableHead className="text-slate-400">Inbox Email</TableHead>

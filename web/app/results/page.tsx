@@ -1,7 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet } from "@/lib/api";
+import type {
+  InboxPick,
+  ClassificationRow,
+  ClassificationsResponse,
+} from "@/lib/types";
 import { toast } from "sonner";
 
 import {
@@ -25,28 +30,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
-
-type InboxSummary = { id: number; mailbox_id: string };
-
-type ClassificationRow = {
-  id: number;
-  run_log_id: number;
-  email_id: string;
-  subject: string;
-  sender: string;
-  category: string;
-  received_at: string;
-  created_at: string;
-};
-
-type ClassificationsResponse = {
-  items: ClassificationRow[];
-  total: number;
-};
-
 const PAGE_SIZE = 25;
 
 /* ------------------------------------------------------------------ */
@@ -55,7 +38,7 @@ const PAGE_SIZE = 25;
 
 export default function ResultsPage() {
   /* -- inbox selector state ---------------------------------------- */
-  const [inboxes, setInboxes] = useState<InboxSummary[]>([]);
+  const [inboxes, setInboxes] = useState<InboxPick[]>([]);
   const [selectedInboxId, setSelectedInboxId] = useState<number | null>(null);
   const [inboxesLoading, setInboxesLoading] = useState(true);
 
@@ -71,6 +54,9 @@ export default function ResultsPage() {
   const [sinceDate, setSinceDate] = useState("");
   const [untilDate, setUntilDate] = useState("");
 
+  /* -- AbortController ref for classifications --------------------- */
+  const abortRef = useRef<AbortController | null>(null);
+
   /* ================================================================ */
   /*  Load inboxes list                                                */
   /* ================================================================ */
@@ -79,13 +65,13 @@ export default function ResultsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await apiGet<{ items: InboxSummary[]; total: number }>(
+        const res = await apiGet<{ items: InboxPick[]; total: number }>(
           "/api/inboxes?page=1&page_size=200"
         );
         if (!cancelled) {
           setInboxes(res.items);
           if (res.items.length > 0) {
-            setSelectedInboxId(res.items[0].id);
+            setSelectedInboxId(res.items[0]!.id);
           }
         }
       } catch (e) {
@@ -101,46 +87,77 @@ export default function ResultsPage() {
   }, []);
 
   /* ================================================================ */
-  /*  Load classifications                                             */
+  /*  Load categories (separate lightweight call)                      */
+  /* ================================================================ */
+
+  useEffect(() => {
+    if (selectedInboxId === null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cats = await apiGet<string[]>(
+          `/api/inboxes/${selectedInboxId}/classifications/categories`
+        );
+        if (!cancelled) {
+          setDistinctCategories(cats);
+        }
+      } catch {
+        // Non-critical: categories dropdown may be empty
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedInboxId]);
+
+  /* ================================================================ */
+  /*  Load classifications (server-side pagination)                     */
   /* ================================================================ */
 
   const loadClassifications = useCallback(async () => {
     if (selectedInboxId === null) return;
+
+    // Abort any in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setDataLoading(true);
     try {
       const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("page_size", String(PAGE_SIZE));
       if (categoryFilter !== "__all__") params.set("category", categoryFilter);
       if (sinceDate) params.set("since", sinceDate);
       if (untilDate) params.set("until", untilDate);
 
-      const qs = params.toString();
-      const path = `/api/inboxes/${selectedInboxId}/classifications${qs ? `?${qs}` : ""}`;
-      const res = await apiGet<ClassificationsResponse>(path);
+      const path = `/api/inboxes/${selectedInboxId}/classifications?${params.toString()}`;
+      const res = await apiGet<ClassificationsResponse>(path, {
+        signal: controller.signal,
+      });
       setRows(res.items);
       setTotal(res.total);
-
-      // Derive distinct categories from data (only when no category filter applied)
-      if (categoryFilter === "__all__") {
-        const cats = Array.from(
-          new Set(res.items.map((r) => r.category).filter(Boolean))
-        ).sort();
-        setDistinctCategories(cats);
-      }
     } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
       const msg = e instanceof Error ? e.message : "Failed to load classifications";
       toast.error(msg);
       setRows([]);
       setTotal(0);
     } finally {
-      setDataLoading(false);
+      if (!controller.signal.aborted) {
+        setDataLoading(false);
+      }
     }
-  }, [selectedInboxId, categoryFilter, sinceDate, untilDate]);
+  }, [selectedInboxId, page, categoryFilter, sinceDate, untilDate]);
 
   useEffect(() => {
     loadClassifications();
+    return () => {
+      abortRef.current?.abort();
+    };
   }, [loadClassifications]);
 
-  // Reset page when filters change
+  // Reset page when filters change (but not when page itself changes)
   useEffect(() => {
     setPage(1);
   }, [selectedInboxId, categoryFilter, sinceDate, untilDate]);
@@ -150,7 +167,6 @@ export default function ResultsPage() {
   /* ================================================================ */
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const pagedRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   /* ================================================================ */
   /*  Render: loading inboxes                                          */
@@ -305,7 +321,7 @@ export default function ResultsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {pagedRows.map((r) => (
+                {rows.map((r) => (
                   <TableRow key={r.id} className="hover:bg-slate-900/40">
                     <TableCell className="max-w-[300px] truncate text-slate-200">
                       {r.subject || "—"}

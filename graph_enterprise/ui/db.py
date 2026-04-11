@@ -1092,15 +1092,23 @@ def list_message_classifications_by_inbox(
     category: Optional[str] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 25,
 ) -> Dict[str, Any]:
-    """Return {items: [...], total: N} for message classifications under an inbox.
+    """Return {items: [...], total: N, page: n, page_size: n} for message classifications under an inbox.
 
     Joins message_classification → run_log to filter by inbox_id. Optional
     ``category``, ``since`` (ISO), ``until`` (ISO) filters are supported.
+    Server-side pagination via ``page`` / ``page_size`` (OFFSET/FETCH).
     """
     if _demo(conn):
         return demo_db.list_message_classifications_by_inbox(
-            inbox_id, category=category, since=since, until=until
+            inbox_id,
+            category=category,
+            since=since,
+            until=until,
+            page=page,
+            page_size=page_size,
         )
     base = (
         "SELECT mc.id, mc.run_log_id, mc.email_id, mc.subject, mc.sender, "
@@ -1130,14 +1138,39 @@ def list_message_classifications_by_inbox(
         base += clause
         count_base += clause
         params.append(until.strip())
+    # Count first (before pagination)
     cur = _execute(conn, count_base, tuple(params))
     row = _fetchone_dict(cur)
     total = int(row["n"]) if row and row.get("n") is not None else 0
-    base += " ORDER BY mc.id DESC"
+    # Server-side pagination
+    page = max(1, int(page))
+    page_size = max(1, min(int(page_size), 200))
+    offset = (page - 1) * page_size
+    base += " ORDER BY mc.id DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
+    params.extend([offset, page_size])
     cur = _execute(conn, base, tuple(params))
     rows = _fetchall_dicts(cur)
     for r in rows:
         ca = r.get("created_at")
         if isinstance(ca, datetime):
             r["created_at"] = _api_utc_iso(ca)
-    return {"items": rows, "total": total}
+    return {"items": rows, "total": total, "page": page, "page_size": page_size}
+
+
+def list_distinct_categories_by_inbox(
+    conn: Any,
+    inbox_id: int,
+) -> List[str]:
+    """Return sorted list of distinct category values for an inbox."""
+    if _demo(conn):
+        return demo_db.list_distinct_categories_by_inbox(inbox_id)
+    cur = _execute(
+        conn,
+        "SELECT DISTINCT mc.category FROM message_classification mc "
+        "JOIN run_log rl ON rl.id = mc.run_log_id "
+        "WHERE rl.inbox_id = ? AND mc.category IS NOT NULL AND mc.category <> '' "
+        "ORDER BY mc.category",
+        (inbox_id,),
+    )
+    rows = _fetchall_dicts(cur)
+    return [str(r["category"]) for r in rows]

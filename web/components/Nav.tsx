@@ -20,21 +20,23 @@ export function Nav() {
 
   function signOut() {
     clearAdminToken();
+    document.cookie = "admin_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
     router.replace("/login");
   }
 
   return (
-    <aside className="w-64 shrink-0 border-r border-slate-800 bg-slate-900/80 p-6">
+    <aside aria-label="Main navigation" className="w-64 shrink-0 border-r border-slate-800 bg-slate-900/80 p-6">
       <h1 className="mb-8 text-xs font-bold uppercase tracking-widest text-slate-500">
         Email Classifier
       </h1>
-      <nav className="flex flex-col gap-2">
+      <nav aria-label="Primary" className="flex flex-col gap-2">
         {links.map(({ href, label }) => {
-          const isActive = pathname === href;
+          const isActive = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
           return (
             <Link
               key={href}
               href={href}
+              aria-current={isActive ? "page" : undefined}
               className={
                 isActive
                   ? "rounded-md bg-slate-800 px-4 py-2.5 text-sm font-medium text-white transition-all"

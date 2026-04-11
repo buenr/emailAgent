@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiSend } from "@/lib/api";
+import { apiGet, apiSend, ApiError } from "@/lib/api";
+import type { AppModel } from "@/lib/types";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -19,31 +20,24 @@ import {
 } from "@/components/ui/table";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-
-type AppModel = {
-  id: number;
-  name: string;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-};
 
 export default function AppModelsPage() {
   const [models, setModels] = useState<AppModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
       const list = await apiGet<AppModel[]>("/api/app-models");
@@ -78,21 +72,23 @@ export default function AppModelsPage() {
     }
   }
 
-  async function onDelete(id: number, name: string) {
-    setError(null);
+  async function onDelete() {
+    if (!deleteTarget) return;
+    setDeleteError(null);
     try {
-      await apiSend(`/api/app-models/${id}`, "DELETE");
+      await apiSend(`/api/app-models/${deleteTarget.id}`, "DELETE");
+      setDeleteTarget(null);
       await load();
       toast.success("Model deleted");
     } catch (err: unknown) {
-      // Check for 409 conflict (model in use)
-      const msg = err instanceof Error ? err.message : "Delete failed";
-      if (msg.toLowerCase().includes("409") || msg.toLowerCase().includes("conflict") || msg.toLowerCase().includes("in use")) {
-        toast.error(`Cannot delete "${name}": model is in use`);
+      if (err instanceof ApiError && err.status === 409) {
+        setDeleteError(`Cannot delete "${deleteTarget.name}": model is in use`);
+        toast.error(`Cannot delete "${deleteTarget.name}": model is in use`);
       } else {
+        const msg = err instanceof Error ? err.message : "Delete failed";
+        setDeleteError(msg);
         toast.error(msg);
       }
-      setError(msg);
     }
   }
 
@@ -165,23 +161,13 @@ export default function AppModelsPage() {
                   <TableCell className="font-mono text-slate-200">{m.name}</TableCell>
                   <TableCell className="text-slate-500">{m.created_at}</TableCell>
                   <TableCell className="text-right">
-                    <AlertDialog>
-                      <AlertDialogTrigger render={
-                        <Button variant="destructive" size="xs">Delete</Button>
-                      } />
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete model &ldquo;{m.name}&rdquo;?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This action cannot be undone. If this model is currently in use by an inbox, deletion will fail.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => onDelete(m.id, m.name)}>Delete</AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                    <Button
+                      variant="destructive"
+                      size="xs"
+                      onClick={() => { setDeleteTarget({ id: m.id, name: m.name }); setDeleteError(null); }}
+                    >
+                      Delete
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))
@@ -189,6 +175,35 @@ export default function AppModelsPage() {
           </TableBody>
         </Table>
       </div>
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete model &ldquo;{deleteTarget?.name}&rdquo;?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. If this model is currently in use by an inbox, deletion will fail.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError && (
+            <Alert variant="destructive" className="mt-2">
+              <AlertDescription>{deleteError}</AlertDescription>
+            </Alert>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void onDelete()}
+            >
+              Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

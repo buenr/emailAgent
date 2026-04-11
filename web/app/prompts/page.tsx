@@ -1,7 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
+import type {
+  Template,
+  InboxPick,
+  PaginatedResponse,
+  TestPromptResult,
+} from "@/lib/types";
 import { PromptMonaco } from "@/components/PromptMonaco";
 import { toast } from "sonner";
 
@@ -16,7 +22,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -30,32 +35,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-type Template = {
-  id: number;
-  name: string;
-  body: string;
-  created_at: string;
-  updated_at: string;
-};
-
-type InboxPick = { id: number; mailbox_id: string };
-
-type InboxListResponse = {
-  items: InboxPick[];
-  total: number;
-  page: number;
-  page_size: number;
-};
-
-type TestPromptResult = {
-  model_json: Record<string, unknown> | null;
-  category_resolved: string;
-  usage: { prompt_token_count: number; candidates_token_count: number };
-  error: string | null;
-  warning: string | null;
-  raw_text: string | null;
-};
-
 export default function PromptsPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedId, setSelectedId] = useState<number | "new" | null>(null);
@@ -63,6 +42,7 @@ export default function PromptsPage() {
   const [error, setError] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
   const [formBody, setFormBody] = useState("");
+  const lastPopulatedIdRef = useRef<number | "new" | null>(null);
 
   const [inboxChoices, setInboxChoices] = useState<InboxPick[]>([]);
   const [testInboxId, setTestInboxId] = useState<number | "">("");
@@ -79,6 +59,7 @@ export default function PromptsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
       const list = await apiGet<Template[]>("/api/prompt-templates");
@@ -87,7 +68,7 @@ export default function PromptsPage() {
         if (prev === "new") return "new";
         if (!list.length) return "new";
         if (prev !== null && typeof prev === "number" && list.some((t) => t.id === prev)) return prev;
-        return list[0].id;
+        return list[0]!.id;
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load";
@@ -106,7 +87,7 @@ export default function PromptsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await apiGet<InboxListResponse>(
+        const r = await apiGet<PaginatedResponse<InboxPick>>(
           "/api/inboxes?page=1&page_size=200"
         );
         if (!cancelled) {
@@ -128,9 +109,11 @@ export default function PromptsPage() {
     };
   }, []);
 
-  const selected = typeof selectedId === "number" ? templates.find((t) => t.id === selectedId) ?? null : null;
+  const selected = useMemo(() => typeof selectedId === "number" ? templates.find((t) => t.id === selectedId) ?? null : null, [templates, selectedId]);
 
   useEffect(() => {
+    if (selectedId === lastPopulatedIdRef.current) return;
+    lastPopulatedIdRef.current = selectedId;
     if (selectedId === "new") {
       setFormName("");
       setFormBody("");
@@ -169,10 +152,10 @@ export default function PromptsPage() {
 
   async function onDelete() {
     if (typeof selectedId !== "number") return;
-    setDeleteDialogOpen(false);
     setError(null);
     try {
       await apiSend(`/api/prompt-templates/${selectedId}`, "DELETE");
+      setDeleteDialogOpen(false);
       setSelectedId(null);
       await load();
       toast.success("Template deleted");
@@ -327,9 +310,13 @@ export default function PromptsPage() {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void onDelete()}>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => void onDelete()}
+                    >
                       Delete
-                    </AlertDialogAction>
+                    </Button>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
@@ -339,7 +326,7 @@ export default function PromptsPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => setSelectedId(templates[0].id)}
+              onClick={() => setSelectedId(templates[0]!.id)}
             >
               Cancel
             </Button>

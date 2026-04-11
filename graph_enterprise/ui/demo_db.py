@@ -979,8 +979,10 @@ def list_message_classifications_by_inbox(
     category: Optional[str] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 25,
 ) -> Dict[str, Any]:
-    """Return {items: [...], total: N} for message classifications under an inbox."""
+    """Return {items: [...], total: N, page: n, page_size: n} for message classifications under an inbox."""
     with _lock:
         # Find run_log ids belonging to this inbox
         run_log_ids: set[int] = set()
@@ -1013,4 +1015,25 @@ def list_message_classifications_by_inbox(
                     and _parse_utc(r.get("created_at")) <= until_dt
                 ]
         total = len(rows)
-        return {"items": rows, "total": total}
+        # Server-side pagination
+        page = max(1, int(page))
+        page_size = max(1, min(int(page_size), 200))
+        offset = (page - 1) * page_size
+        paged = rows[offset : offset + page_size]
+        return {"items": paged, "total": total, "page": page, "page_size": page_size}
+
+
+def list_distinct_categories_by_inbox(inbox_id: int) -> List[str]:
+    """Return sorted list of distinct category values for an inbox."""
+    with _lock:
+        run_log_ids: set[int] = set()
+        for lg in _state["run_logs"]:
+            if int(lg["inbox_id"]) == inbox_id:
+                run_log_ids.add(int(lg["id"]))
+        cats: set[str] = set()
+        for mc in _state["message_classifications"]:
+            if int(mc["run_log_id"]) in run_log_ids:
+                c = str(mc.get("category", "")).strip()
+                if c:
+                    cats.add(c)
+        return sorted(cats)

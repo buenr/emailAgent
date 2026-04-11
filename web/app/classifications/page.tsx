@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
+import type { SetRow, TaxRow, ClassificationSetDetail } from "@/lib/types";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -26,21 +27,14 @@ import {
 } from "@/components/ui/select";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
-
-type SetRow = { id: number; name: string; created_at: string; updated_at: string };
-type TaxRow = { name: string; description: string };
-
-type Detail = SetRow & { categories: TaxRow[] };
 
 export default function ClassificationsPage() {
   const [sets, setSets] = useState<SetRow[]>([]);
@@ -49,8 +43,11 @@ export default function ClassificationsPage() {
   const [categories, setCategories] = useState<TaxRow[]>([{ name: "", description: "" }]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const loadSets = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
       const list = await apiGet<SetRow[]>("/api/classification-sets");
@@ -59,7 +56,7 @@ export default function ClassificationsPage() {
         if (prev === "new") return "new";
         if (!list.length) return "new";
         if (prev !== null && list.some((s) => s.id === prev)) return prev;
-        return list[0].id;
+        return list[0]!.id;
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load sets";
@@ -73,7 +70,7 @@ export default function ClassificationsPage() {
   const loadDetail = useCallback(async (id: number) => {
     setError(null);
     try {
-      const d = await apiGet<Detail>(`/api/classification-sets/${id}`);
+      const d = await apiGet<ClassificationSetDetail>(`/api/classification-sets/${id}`);
       setSetName(d.name);
       const cats = d.categories?.length ? d.categories.map((c) => ({ name: c.name, description: c.description ?? "" })) : [{ name: "", description: "" }];
       setCategories(cats);
@@ -139,15 +136,16 @@ export default function ClassificationsPage() {
 
   async function onDeleteSet() {
     if (selectedId === null || selectedId === "new") return;
-    setError(null);
+    setDeleteError(null);
     try {
       await apiSend(`/api/classification-sets/${selectedId}`, "DELETE");
+      setDeleteDialogOpen(false);
       setSelectedId(null);
       await loadSets();
       toast.success("Classification set deleted");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Delete failed";
-      setError(msg);
+      setDeleteError(msg);
       toast.error(msg);
     }
   }
@@ -194,7 +192,7 @@ export default function ClassificationsPage() {
       )}
 
       <div className="mb-6">
-        <Label className="mb-1 block text-sm text-slate-400">Select Set</Label>
+        <Label id="classification-set-select-label" className="mb-1 block text-sm text-slate-400">Select Set</Label>
         <div className="flex items-center gap-3">
           <Select
             value={selectedId === "new" ? "new" : selectedId !== null ? String(selectedId) : ""}
@@ -202,7 +200,7 @@ export default function ClassificationsPage() {
               setSelectedId(val === "new" ? "new" : val ? Number(val) : null);
             }}
           >
-            <SelectTrigger className="w-full max-w-md">
+            <SelectTrigger className="w-full max-w-md" aria-labelledby="classification-set-select-label">
               <SelectValue placeholder="Select a set" />
             </SelectTrigger>
             <SelectContent>
@@ -224,8 +222,9 @@ export default function ClassificationsPage() {
         <div className="space-y-6">
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex-1 max-w-md">
-              <Label className="mb-1 block text-sm text-slate-400">Set Name</Label>
+              <Label htmlFor="classification-set-name" className="mb-1 block text-sm text-slate-400">Set Name</Label>
               <Input
+                id="classification-set-name"
                 value={setName}
                 onChange={(e) => setSetName(e.target.value)}
                 placeholder="e.g. Default Classification Set"
@@ -233,23 +232,13 @@ export default function ClassificationsPage() {
             </div>
             {selectedId !== "new" && (
               <>
-                <AlertDialog>
-                  <AlertDialogTrigger render={
-                    <Button variant="destructive" size="default">Delete</Button>
-                  } />
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete classification set?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This action cannot be undone. The set and all its categories will be permanently deleted.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={onDeleteSet}>Delete</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <Button
+                  variant="destructive"
+                  size="default"
+                  onClick={() => { setDeleteDialogOpen(true); setDeleteError(null); }}
+                >
+                  Delete
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -286,9 +275,10 @@ export default function ClassificationsPage() {
                 </TableHeader>
                 <TableBody>
                   {categories.map((row, i) => (
-                    <TableRow key={i} className="border-b border-slate-800/80">
+                    <TableRow key={row.name || `new-row-${i}`} className="border-b border-slate-800/80">
                       <TableCell className="p-2 align-top">
                         <Input
+                          aria-label={`Category name, row ${i + 1}`}
                           value={row.name}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -300,6 +290,7 @@ export default function ClassificationsPage() {
                       </TableCell>
                       <TableCell className="p-2 align-top">
                         <Textarea
+                          aria-label={`Category description, row ${i + 1}`}
                           className="min-h-[80px] resize-y"
                           value={row.description}
                           onChange={(e) => {
@@ -335,6 +326,35 @@ export default function ClassificationsPage() {
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => { if (!open) setDeleteDialogOpen(false); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete classification set?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. The set and all its categories will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError && (
+            <Alert variant="destructive" className="mt-2">
+              <AlertDescription>{deleteError}</AlertDescription>
+            </Alert>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void onDeleteSet()}
+            >
+              Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

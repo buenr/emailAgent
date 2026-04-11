@@ -56,6 +56,7 @@ export default function LoginPage() {
         code: "0000",
       })) as { access_token: string };
       setAdminToken(res.access_token);
+      document.cookie = "admin_token=" + res.access_token + "; path=/; SameSite=Strict";
       router.replace("/dashboard");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign-in failed");
@@ -92,6 +93,7 @@ export default function LoginPage() {
         code,
       })) as { access_token: string };
       setAdminToken(res.access_token);
+      document.cookie = "admin_token=" + res.access_token + "; path=/; SameSite=Strict";
       router.replace("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
@@ -104,10 +106,10 @@ export default function LoginPage() {
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
       <Card>
         <CardHeader>
-          <CardTitle className="text-xl text-white">
+          <CardTitle className="text-xl text-foreground">
             Email Classifier — Admin sign-in
           </CardTitle>
-          <CardDescription className="text-slate-400">
+          <CardDescription className="text-muted-foreground">
             Use your allowlisted work email, company password, and the code sent
             to your inbox.
           </CardDescription>
@@ -143,10 +145,11 @@ export default function LoginPage() {
           {step === 1 ? (
             <form onSubmit={requestCode} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                <Label htmlFor="login-email" className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Email
                 </Label>
                 <Input
+                  id="login-email"
                   type="email"
                   autoComplete="username"
                   value={email}
@@ -155,10 +158,11 @@ export default function LoginPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                <Label htmlFor="login-password" className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Company password
                 </Label>
                 <Input
+                  id="login-password"
                   type="password"
                   autoComplete="current-password"
                   value={companyPassword}
@@ -176,15 +180,16 @@ export default function LoginPage() {
             </form>
           ) : (
             <form onSubmit={verify} className="flex flex-col gap-4">
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-muted-foreground">
                 Enter the code emailed to{" "}
                 <strong className="text-slate-200">{email}</strong>.
               </p>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                <Label htmlFor="login-code" className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Code
                 </Label>
                 <Input
+                  id="login-code"
                   type="text"
                   inputMode="numeric"
                   autoComplete="one-time-code"
@@ -194,10 +199,11 @@ export default function LoginPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                <Label htmlFor="login-password-confirm" className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Company password (again)
                 </Label>
                 <Input
+                  id="login-password-confirm"
                   type="password"
                   value={companyPassword}
                   onChange={(ev) => setCompanyPassword(ev.target.value)}

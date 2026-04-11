@@ -1,8 +1,20 @@
+// In production, the Next.js rewrite (next.config.mjs) proxies /api/* to the
+// backend, so NEXT_PUBLIC_API_URL can be omitted. In dev, direct fetch is used.
 const BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
   "http://127.0.0.1:8000";
 
 export const AUTH_STORAGE_KEY = "graph_enterprise_admin_token";
+
+/** Custom error that preserves the HTTP status code from the API response. */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
 export function getAdminToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -44,16 +56,17 @@ async function errorMessage(res: Response): Promise<string> {
   }
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(path: string, opts?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${path}`, {
     cache: "no-store",
     headers: { ...authHeaders() },
+    ...opts,
   });
   if (r.status === 401) {
     onUnauthorized();
-    throw new Error("Not authenticated");
+    throw new ApiError("Not authenticated", 401);
   }
-  if (!r.ok) throw new Error(await errorMessage(r));
+  if (!r.ok) throw new ApiError(await errorMessage(r), r.status);
   return r.json() as Promise<T>;
 }
 
@@ -72,9 +85,9 @@ export async function apiSend<T>(
   });
   if (r.status === 401) {
     onUnauthorized();
-    throw new Error("Not authenticated");
+    throw new ApiError("Not authenticated", 401);
   }
-  if (!r.ok) throw new Error(await errorMessage(r));
+  if (!r.ok) throw new ApiError(await errorMessage(r), r.status);
   if (r.status === 204 || r.headers.get("content-length") === "0") {
     return undefined as T;
   }
@@ -90,7 +103,7 @@ export async function apiPublicPost<T>(path: string, body: unknown): Promise<T> 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(await errorMessage(r));
+  if (!r.ok) throw new ApiError(await errorMessage(r), r.status);
   const text = await r.text();
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
