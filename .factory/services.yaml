@@ -7,7 +7,7 @@ commands:
 
 services:
   backend:
-    start: cd "/mnt/c/users/RNA/Documents/Python Scripts/Email_Tagging_UI" && python3 run_api.py
+    start: cd "/mnt/c/users/RNA/Documents/Python Scripts/Email_Tagging_UI" && .venv/bin/python run_api.py
     stop: lsof -ti :8000 | xargs kill 2>/dev/null || true
     healthcheck: curl -sf http://localhost:8000/api/health
     port: 8000
