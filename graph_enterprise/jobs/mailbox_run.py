@@ -344,31 +344,42 @@ def run_pipeline_stub(
                     else:
                         failures += 1
 
-            # Agent workflow: extract ref numbers for ETAOrTracking messages and invoke configured APIs.
-            agent_preds = [p for p in pred_list if p.get("category") == "ETAOrTracking"]
-            if agent_preds:
+            # Agentic workflow: config-driven extraction and API calls for matching categories.
+            if mailbox.inbox_id is not None:
                 try:
-                    agent_results = run_agent_workflow(
-                        mailbox, client, agent_preds, messages_work
-                    )
-                    agent_ok = sum(1 for r in agent_results if r.success)
-                    agent_fail = len(agent_results) - agent_ok
-                    logger.info(
-                        "Agent workflow completed for %s: %s/%s successful responses",
-                        mailbox.mailbox_id,
-                        agent_ok,
-                        len(agent_results),
-                    )
-                    if agent_fail:
-                        logger.warning(
-                            "Agent workflow: %s failures out of %s for %s",
-                            agent_fail,
-                            len(agent_results),
-                            mailbox.mailbox_id,
+                    with db_store.get_connection() as conn:
+                        aw_row = db_store.get_agentic_workflow_for_inbox(conn, mailbox.inbox_id)
+                    if aw_row and aw_row.get("is_active"):
+                        aw_prompt_body = aw_row.get("extraction_prompt_body", "")
+                        with db_store.get_connection() as conn:
+                            all_agent_configs = db_store.get_agent_api_configs(conn)
+                        aw_row["inbox_mailbox_id"] = mailbox.mailbox_id
+                        agent_results = run_agent_workflow(
+                            aw_row,
+                            aw_prompt_body,
+                            messages_work,
+                            pred_list,
+                            all_agent_configs,
+                            mailbox_config=mailbox,
                         )
+                        agent_ok = sum(1 for r in agent_results if r.success)
+                        agent_fail = len(agent_results) - agent_ok
+                        logger.info(
+                            "Agentic workflow completed for %s: %s/%s successful responses",
+                            mailbox.mailbox_id,
+                            agent_ok,
+                            len(agent_results),
+                        )
+                        if agent_fail:
+                            logger.warning(
+                                "Agentic workflow: %s failures out of %s for %s",
+                                agent_fail,
+                                len(agent_results),
+                                mailbox.mailbox_id,
+                            )
                 except Exception as exc:
                     logger.exception(
-                        "Agent workflow failed (non-blocking) for %s: %s",
+                        "Agentic workflow failed (non-blocking) for %s: %s",
                         mailbox.mailbox_id,
                         exc,
                     )

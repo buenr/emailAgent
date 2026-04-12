@@ -365,3 +365,60 @@ class MailboxPipelineConfig(BaseModel):
         max_length=_MAX_SUBJECT_RULES,
         description="Ordered rules; first pattern match assigns category.",
     )
+
+
+class FunctionParameter(BaseModel):
+    """A single parameter in a Gemini function declaration for agentic extraction."""
+
+    name: str = Field(..., min_length=1, max_length=128)
+    type: str = Field(
+        default="string",
+        description="JSON Schema type: string, number, integer, boolean.",
+    )
+    description: str = Field(default="", max_length=1024)
+    required: bool = False
+
+    @field_validator("type")
+    @classmethod
+    def _validate_type(cls, v: str) -> str:
+        allowed = {"string", "number", "integer", "boolean"}
+        if v not in allowed:
+            raise ValueError(f"type must be one of {allowed}")
+        return v
+
+
+class FunctionDeclaration(BaseModel):
+    """User-defined Gemini function declaration for agentic extraction."""
+
+    name: str = Field(..., min_length=1, max_length=128)
+    description: str = Field(default="", max_length=2048)
+    parameters: List[FunctionParameter] = Field(default_factory=list, max_length=20)
+
+
+class AgenticWorkflowConfig(BaseModel):
+    """Stored configuration for an agentic workflow linked to an inbox."""
+
+    id: Optional[int] = None
+    inbox_id: int = Field(..., ge=1)
+    name: str = Field(default="", max_length=255)
+    extraction_prompt_id: int = Field(..., ge=1, description="FK → prompt_template")
+    trigger_categories: List[str] = Field(
+        ...,
+        min_length=1,
+        description="Only emails classified into one of these categories trigger extraction.",
+    )
+    function_declarations: List[FunctionDeclaration] = Field(
+        default_factory=list,
+        max_length=10,
+        description="Custom Gemini function-calling schemas for data extraction.",
+    )
+    agent_api_names: List[str] = Field(
+        default_factory=list,
+        description="Names of configured Agent APIs to call sequentially.",
+    )
+    webhook_url: Optional[str] = Field(
+        default=None,
+        max_length=2048,
+        description="POST a summary of extraction + API results here.",
+    )
+    is_active: bool = True

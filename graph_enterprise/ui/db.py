@@ -141,6 +141,7 @@ def _mssql_apply_sql_files(conn: Any) -> None:
         "004_inbox_subject_classify.sql",
         "005_run_log_category_histogram.sql",
         "006_message_classification.sql",
+        "007_agentic_workflow.sql",
     ):
         p = base / fname
         if not p.exists():
@@ -1171,3 +1172,188 @@ def list_distinct_categories_by_inbox(
     )
     rows = _fetchall_dicts(cur)
     return [str(r["category"]) for r in rows]
+
+
+# --- Agentic workflows ---
+
+
+def _normalize_agentic_row(r: Dict[str, Any]) -> None:
+    """Parse JSON columns and normalize booleans for REST responses."""
+    r["is_active"] = bool(r.get("is_active"))
+    for json_col in ("trigger_categories", "function_declarations", "agent_api_names"):
+        raw = r.get(json_col)
+        if isinstance(raw, str):
+            try:
+                r[json_col] = json.loads(raw)
+            except Exception:
+                r[json_col] = []
+        elif raw is None:
+            r[json_col] = []
+    for k in ("created_at", "updated_at"):
+        v = r.get(k)
+        if isinstance(v, datetime):
+            r[k] = _api_utc_iso(v)
+
+
+def list_agentic_workflows(conn: Any) -> List[Dict[str, Any]]:
+    if _demo(conn):
+        return demo_db.list_agentic_workflows()
+    cur = _execute(
+        conn,
+        "SELECT aw.id, aw.inbox_id, aw.name, aw.extraction_prompt_id, "
+        "aw.trigger_categories, aw.function_declarations, aw.agent_api_names, "
+        "aw.webhook_url, aw.is_active, aw.created_at, aw.updated_at, "
+        "i.mailbox_id AS inbox_mailbox_id, pt.name AS extraction_prompt_name "
+        "FROM agentic_workflow aw "
+        "JOIN inbox i ON i.id = aw.inbox_id "
+        "JOIN prompt_template pt ON pt.id = aw.extraction_prompt_id "
+        "ORDER BY aw.name, aw.id",
+    )
+    rows = _fetchall_dicts(cur)
+    for r in rows:
+        _normalize_agentic_row(r)
+    return rows
+
+
+def get_agentic_workflow(conn: Any, workflow_id: int) -> Optional[Dict[str, Any]]:
+    if _demo(conn):
+        return demo_db.get_agentic_workflow(workflow_id)
+    cur = _execute(
+        conn,
+        "SELECT aw.id, aw.inbox_id, aw.name, aw.extraction_prompt_id, "
+        "aw.trigger_categories, aw.function_declarations, aw.agent_api_names, "
+        "aw.webhook_url, aw.is_active, aw.created_at, aw.updated_at, "
+        "i.mailbox_id AS inbox_mailbox_id, pt.name AS extraction_prompt_name "
+        "FROM agentic_workflow aw "
+        "JOIN inbox i ON i.id = aw.inbox_id "
+        "JOIN prompt_template pt ON pt.id = aw.extraction_prompt_id "
+        "WHERE aw.id = ?",
+        (workflow_id,),
+    )
+    row = _fetchone_dict(cur)
+    if row:
+        _normalize_agentic_row(row)
+    return row
+
+
+def get_agentic_workflow_for_inbox(conn: Any, inbox_id: int) -> Optional[Dict[str, Any]]:
+    """Return the first active agentic workflow for an inbox (used during pipeline execution)."""
+    if _demo(conn):
+        return demo_db.get_agentic_workflow_for_inbox(inbox_id)
+    cur = _execute(
+        conn,
+        "SELECT aw.id, aw.inbox_id, aw.name, aw.extraction_prompt_id, "
+        "aw.trigger_categories, aw.function_declarations, aw.agent_api_names, "
+        "aw.webhook_url, aw.is_active, "
+        "pt.body AS extraction_prompt_body "
+        "FROM agentic_workflow aw "
+        "JOIN prompt_template pt ON pt.id = aw.extraction_prompt_id "
+        "WHERE aw.inbox_id = ? AND aw.is_active = 1",
+        (inbox_id,),
+    )
+    row = _fetchone_dict(cur)
+    if row:
+        _normalize_agentic_row(row)
+    return row
+
+
+def create_agentic_workflow(
+    conn: Any,
+    *,
+    inbox_id: int,
+    name: str,
+    extraction_prompt_id: int,
+    trigger_categories_json: str,
+    function_declarations_json: Optional[str],
+    agent_api_names_json: str,
+    webhook_url: Optional[str],
+    is_active: bool = True,
+) -> int:
+    if _demo(conn):
+        return demo_db.create_agentic_workflow(
+            inbox_id=inbox_id,
+            name=name,
+            extraction_prompt_id=extraction_prompt_id,
+            trigger_categories_json=trigger_categories_json,
+            function_declarations_json=function_declarations_json,
+            agent_api_names_json=agent_api_names_json,
+            webhook_url=webhook_url,
+            is_active=is_active,
+        )
+    now = _now_iso()
+    cur = _execute(
+        conn,
+        "INSERT INTO agentic_workflow "
+        "(inbox_id, name, extraction_prompt_id, trigger_categories, "
+        "function_declarations, agent_api_names, webhook_url, is_active, "
+        "created_at, updated_at) "
+        "OUTPUT INSERTED.id AS id "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            inbox_id,
+            name,
+            extraction_prompt_id,
+            trigger_categories_json,
+            function_declarations_json,
+            agent_api_names_json,
+            webhook_url,
+            1 if is_active else 0,
+            now,
+            now,
+        ),
+    )
+    row = _fetchone_dict(cur)
+    return int(row["id"]) if row else 0
+
+
+def update_agentic_workflow(
+    conn: Any,
+    workflow_id: int,
+    *,
+    inbox_id: int,
+    name: str,
+    extraction_prompt_id: int,
+    trigger_categories_json: str,
+    function_declarations_json: Optional[str],
+    agent_api_names_json: str,
+    webhook_url: Optional[str],
+    is_active: bool = True,
+) -> None:
+    if _demo(conn):
+        demo_db.update_agentic_workflow(
+            workflow_id,
+            inbox_id=inbox_id,
+            name=name,
+            extraction_prompt_id=extraction_prompt_id,
+            trigger_categories_json=trigger_categories_json,
+            function_declarations_json=function_declarations_json,
+            agent_api_names_json=agent_api_names_json,
+            webhook_url=webhook_url,
+            is_active=is_active,
+        )
+        return
+    _execute(
+        conn,
+        "UPDATE agentic_workflow SET inbox_id = ?, name = ?, extraction_prompt_id = ?, "
+        "trigger_categories = ?, function_declarations = ?, agent_api_names = ?, "
+        "webhook_url = ?, is_active = ?, updated_at = ? WHERE id = ?",
+        (
+            inbox_id,
+            name,
+            extraction_prompt_id,
+            trigger_categories_json,
+            function_declarations_json,
+            agent_api_names_json,
+            webhook_url,
+            1 if is_active else 0,
+            _now_iso(),
+            workflow_id,
+        ),
+    )
+
+
+def delete_agentic_workflow(conn: Any, workflow_id: int) -> None:
+    if _demo(conn):
+        demo_db.delete_agentic_workflow(workflow_id)
+        return
+    _execute(conn, "DELETE FROM agentic_workflow WHERE id = ?", (workflow_id,))

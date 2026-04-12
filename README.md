@@ -12,7 +12,7 @@ The system features a **Next.js** administration UI backed by a **FastAPI** + **
 - **Advanced fetch filtering**: Configure robust Graph `$filter` and `$search` parameters per inbox (sender allow/deny lists, body keywords, attachment filters, importance levels).
 - **Fleet scheduling**: A dedicated loop and Celery worker pool reliably poll multiple inboxes at custom intervals. Redis-based locking prevents overlapping runs.
 - **Multi-model support**: Assign different Gemini models (for example `gemini-3.1-pro`, `gemini-2.5-flash-lite`) to different inboxes based on complexity requirements.
-- **Agent workflow integration**: Extract reference numbers (order, BOL, PRO, truck, trailer) from emails using Gemini function calling, and integrate with external APIs via webhook configuration for downstream processing.
+- **Agentic workflow integration**: A fully customizable pipeline for extracting structured data from emails using **Gemini Function Calling**. Define arbitrary JSON schemas in the UI, chain multiple sequential API calls, and POST results to webhooks. Includes a built-in **Dry Run Simulator** for testing extraction prompts and schemas.
 - **Web UI**: A Next.js dashboard to manage prompt templates, custom classification sets, mailbox mappings, subject rules, agent workflows, run logs, and token spend analytics.
 - **Statistics & monitoring**: Real-time token usage trends, classification breakdown by category, run volume metrics, and category histograms for fleet-wide visibility.
 
@@ -186,11 +186,11 @@ The UI provides **two separate workflow builders** for different use cases:
 **Purpose**: Extract structured data from emails and call external APIs.
 
 - **Input**: Inbox → Email messages
-- **Processing**: Fetch → Gemini function calling for data extraction → Call agent APIs → POST to webhook
-- **Output**: Extracted structured data, API responses, webhook callbacks
-- **Use case**: Order processing, ETA tracking, reference number extraction, downstream integration
+- **Processing**: Fetch → Gemini function calling with **configurable schemas** → Sequential agent API chaining → POST to webhook
+- **Output**: Extracted JSON objects, API response logs, webhook callbacks
+- **Use case**: Order extraction, ETA processing, automated data entry into ERPs, complex multi-step integrations
 
-**Example**: Monitor an orders inbox, extract order ID/BOL/PRO numbers, call the Order Management and ETA APIs, and POST results to a webhook for downstream systems.
+**Example**: Monitor a "Logistics" inbox; when an email is classified as `ETAUpdate`, trigger an agentic workflow that extracts `Order #`, `Truck ID`, and `New ETA` into a structured JSON, sends it to your internal Transport Management System (TMS) API, and notifies a Slack webhook.
 
 ### Key Differences
 
@@ -255,13 +255,13 @@ When you add or edit an inbox in the UI, configure:
 - **Worker count** (1–4): Concurrent PATCH calls during write-back
 - **Model override**: Assign a different Gemini model to this inbox (overrides `GEMINI_MODEL` env)
 
-### Agent API configuration
+### Agentic workflows
 
-**Agent workflows** enable reference number extraction and downstream integration:
-- Extract structured data (order numbers, BOLs, PRO numbers, truck/trailer IDs) from email bodies using Gemini function calling
-- Configure external webhook URLs to POST classification results + extracted metadata
-- Useful for downstream systems (order processing, ETA tracking, dispatch)
-- Metadata is stored in `message_classification` alongside category assignments
+**Agentic workflows** enable zero-code AI extraction and downstream integration:
+- **Dynamic Schemas**: Define function names and parameters (strings, numbers, booleans) directly in the UI.
+- **Gemini Function Calling**: The system automatically constructs tool definitions for Gemini to ensure 100% schema-compliant extraction.
+- **API Chaining**: Sequentially call multiple external APIs. The results of each call are logged and can be sent to a master webhook.
+- **Workflow Simulator**: Test your extraction prompts and schemas against mock emails side-by-side before going live.
 
 ### AI models
 
@@ -320,9 +320,7 @@ Seeded on first run if `default_categories.py` is applied:
 | ------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Authentication      | `graph_enterprise/auth/`                                | MSAL app-only tokens for Microsoft Graph.                                                                                                                                                    |
 | Microsoft Graph     | `graph_enterprise/microsoft_graph/`                     | Paginated `/messages` with `$filter` / `$search`; concurrent PATCH write-back.                                                                                                               |
-| Classification      | `graph_enterprise/classification/`                      | `schema_from_config.py` (dynamic JSON Schema), `prompt.py` (templates and normalization), `gemini_category_batch.py` (Vertex calls, retry/backoff), `subject_rules.py` (LIKE / hybrid path), `eta_extractor.py` (reference number extraction). |
-| Jobs and scheduling | `graph_enterprise/jobs/`                                | `celery_app.py`, `tasks.py`, `scheduler_loop.py`, `run_lock.py` (Redis), `mailbox_run.py` (CLI orchestration).                                                                               |
-| Agent workflows     | `graph_enterprise/classification/eta_extractor.py`      | Gemini function calling for reference number extraction; webhook integration for external API callbacks.                                                                                     |
+| Agent workflows     | `graph_enterprise/agent_workflow/`                      | `orchestrator.py` handles dynamic function calling, API sequence orchestration, and results logging.                                         |
 | API and UI          | `graph_enterprise/api/`, `graph_enterprise/ui/`, `web/` | FastAPI backend (39 endpoints) and Next.js frontend (8 pages) for prompts, classifications, inboxes, models, agent APIs, run logs, and statistics.                                           |
 
 

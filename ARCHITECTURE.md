@@ -27,6 +27,7 @@ graph TD
         Graph[Microsoft Graph API]
         Gemini["Google Vertex AI (Gemini)"]
         Webhooks[Agent Webhooks]
+        AgentAPIs[External Agent APIs]
     end
 
     %% Connections

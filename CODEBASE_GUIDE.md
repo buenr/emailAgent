@@ -32,11 +32,9 @@ The core Python package containing all business logic.
 - **[`api/`](graph_enterprise/api)**: FastAPI route definitions.
   - `main.py`: Defines all 35+ REST endpoints for the UI.
   - `admin_auth.py`: Logic for OTP-based administrative sign-in.
-- **[`classification/`](graph_enterprise/classification)**: The "Brain" of the project.
-  - `gemini_category_batch.py`: Vertex AI integration, batching, and retry logic.
-  - `subject_rules.py`: Hybrid path for fast, non-LLM classification using regex/LIKE patterns.
-  - `prompt.py`: Jinja-like template rendering for LLM instructions.
-  - `schema_from_config.py`: Automatically generates JSON Schemas from DB taxonomies to ensure structured LLM output.
+  - `schema_from_config.py`: Automatically generates JSON Schemas from DB taxonomies to ensure structured LLM classification output.
+- **[`agent_workflow/`](graph_enterprise/agent_workflow)**: Customizable extraction and API orchestration.
+  - `orchestrator.py`: Master logic for Gemini function calling, sequential API chaining, and result logging. This replaces the old hardcoded freight extraction.
 - **[`jobs/`](graph_enterprise/jobs)**: Execution and Scheduling.
   - `mailbox_run.py`: The master orchestrator for a single inbox run. **Start here to understand the data flow.**
   - `scheduler_loop.py`: Polls the database and enqueues due inboxes into Celery.
@@ -67,10 +65,11 @@ When a mailbox is processed (via scheduler or manual trigger), the flow in `mail
 2. **Fetch**: Query Graph API for messages based on the inbox's `FetchFilter` (time window, folders, etc.).
 3. **Partition**: Check messages against **Subject Rules**. Matching messages are handled immediately.
 4. **Classify**: Remaining messages are batched and sent to **Gemini** with a dynamic JSON Schema and Prompt Template.
-5. **Extract** (Optional): If Agentic workflow is enabled, extract reference numbers (Order #, BOL, etc.).
+5. **Extract** (Optional): If an Agentic workflow is configured, use **Gemini Function Calling** to extract structured data based on the user-defined schema.
 6. **Write-back**: PATCH predicted categories back to Outlook.
-7. **Callback**: Trigger webhooks for Agentic integrations.
-8. **Record**: Save the `run_log` and `message_classification` metrics to SQL Server.
+7. **Orchestrate APIs**: Sequentially call configured **External Agent APIs** with the extracted data.
+8. **Callback**: Trigger webhooks with a summary of all results.
+9. **Record**: Save the `run_log` and `message_classification` metrics to SQL Server.
 
 ### 2. Configuration & State
 - **SQL Server**: The source of truth for all templates, sets, models, and inbox mappings.

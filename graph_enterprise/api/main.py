@@ -868,6 +868,218 @@ def import_data(payload: ImportPayload) -> dict[str, Any]:
     return {"imported": imported}
 
 
+# --- Agentic Workflows ---
+
+
+class FunctionParameterSchema(BaseModel):
+    name: str = Field(..., min_length=1)
+    type: str = "string"
+    description: str = ""
+    required: bool = False
+
+
+class FunctionDeclarationSchema(BaseModel):
+    name: str = Field(..., min_length=1)
+    description: str = ""
+    parameters: List[FunctionParameterSchema] = Field(default_factory=list)
+
+
+class AgenticWorkflowCreate(BaseModel):
+    inbox_id: int = Field(..., ge=1)
+    name: str = ""
+    extraction_prompt_id: int = Field(..., ge=1)
+    trigger_categories: List[str] = Field(..., min_length=1)
+    function_declarations: List[FunctionDeclarationSchema] = Field(default_factory=list)
+    agent_api_names: List[str] = Field(default_factory=list)
+    webhook_url: Optional[str] = None
+    is_active: bool = True
+
+
+class AgenticWorkflowUpdate(BaseModel):
+    inbox_id: int = Field(..., ge=1)
+    name: str = ""
+    extraction_prompt_id: int = Field(..., ge=1)
+    trigger_categories: List[str] = Field(..., min_length=1)
+    function_declarations: List[FunctionDeclarationSchema] = Field(default_factory=list)
+    agent_api_names: List[str] = Field(default_factory=list)
+    webhook_url: Optional[str] = None
+    is_active: bool = True
+
+
+class DryRunRequest(BaseModel):
+    """Optional mock email for dry-run; if omitted, uses default test data."""
+    subject: str = "Test ETA Update"
+    sender: str = "dispatch@example.com"
+    body: str = "Order #12345, BOL 67890. ETA is 3pm today. Truck T-100, Trailer TL-200."
+
+
+@protected.get("/agentic-workflows")
+def list_agentic_workflows() -> List[dict[str, Any]]:
+    with db.get_connection() as conn:
+        return db.list_agentic_workflows(conn)
+
+
+@protected.get("/agentic-workflows/{workflow_id}")
+def get_agentic_workflow(workflow_id: int) -> dict[str, Any]:
+    with db.get_connection() as conn:
+        row = db.get_agentic_workflow(conn, workflow_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Agentic workflow not found.")
+    return row
+
+
+@protected.post("/agentic-workflows", status_code=201)
+def create_agentic_workflow(payload: AgenticWorkflowCreate) -> dict[str, int]:
+    func_decls = [fd.model_dump() for fd in payload.function_declarations]
+    try:
+        with db.get_connection() as conn:
+            new_id = db.create_agentic_workflow(
+                conn,
+                inbox_id=payload.inbox_id,
+                name=payload.name.strip(),
+                extraction_prompt_id=payload.extraction_prompt_id,
+                trigger_categories_json=json.dumps(payload.trigger_categories),
+                function_declarations_json=json.dumps(func_decls) if func_decls else None,
+                agent_api_names_json=json.dumps(payload.agent_api_names),
+                webhook_url=(payload.webhook_url or "").strip() or None,
+                is_active=payload.is_active,
+            )
+        return {"id": new_id}
+    except Exception as e:
+        if db.is_integrity_error(e):
+            raise _integrity("Invalid inbox or prompt reference.") from e
+        raise
+
+
+@protected.put("/agentic-workflows/{workflow_id}")
+def update_agentic_workflow(workflow_id: int, payload: AgenticWorkflowUpdate) -> dict[str, str]:
+    func_decls = [fd.model_dump() for fd in payload.function_declarations]
+    try:
+        with db.get_connection() as conn:
+            existing = db.get_agentic_workflow(conn, workflow_id)
+            if not existing:
+                raise HTTPException(status_code=404, detail="Agentic workflow not found.")
+            db.update_agentic_workflow(
+                conn,
+                workflow_id,
+                inbox_id=payload.inbox_id,
+                name=payload.name.strip(),
+                extraction_prompt_id=payload.extraction_prompt_id,
+                trigger_categories_json=json.dumps(payload.trigger_categories),
+                function_declarations_json=json.dumps(func_decls) if func_decls else None,
+                agent_api_names_json=json.dumps(payload.agent_api_names),
+                webhook_url=(payload.webhook_url or "").strip() or None,
+                is_active=payload.is_active,
+            )
+        return {"status": "ok"}
+    except Exception as e:
+        if db.is_integrity_error(e):
+            raise _integrity("Invalid inbox or prompt reference.") from e
+        raise
+
+
+@protected.delete("/agentic-workflows/{workflow_id}")
+def delete_agentic_workflow(workflow_id: int) -> dict[str, str]:
+    with db.get_connection() as conn:
+        existing = db.get_agentic_workflow(conn, workflow_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Agentic workflow not found.")
+        db.delete_agentic_workflow(conn, workflow_id)
+    return {"status": "ok"}
+
+
+@protected.post("/agentic-workflows/{workflow_id}/dry-run")
+def dry_run_agentic_workflow(workflow_id: int, payload: DryRunRequest) -> dict[str, Any]:
+    """
+    Simulate extraction on a mock email without calling external APIs.
+    Returns the extracted data and the API payload that would be sent.
+    """
+    from ..agent_workflow.orchestrator import extract_with_function_calling
+
+    with db.get_connection() as conn:
+        wf = db.get_agentic_workflow(conn, workflow_id)
+        if not wf:
+            raise HTTPException(status_code=404, detail="Agentic workflow not found.")
+        # Load extraction prompt body
+        prompts = db.list_prompt_templates(conn)
+        prompt_row = next(
+            (p for p in prompts if int(p["id"]) == int(wf["extraction_prompt_id"])), None
+        )
+        if not prompt_row:
+            raise HTTPException(status_code=404, detail="Extraction prompt not found.")
+        # Load inbox for mailbox config
+        inbox_row = db.get_inbox_by_id(conn, int(wf["inbox_id"]))
+        if not inbox_row:
+            raise HTTPException(status_code=404, detail="Linked inbox not found.")
+
+    extraction_prompt_body = prompt_row.get("body", "")
+    func_decls = wf.get("function_declarations", [])
+
+    mock_email: dict[str, Any] = {
+        "id": "dry-run-00000000-0000-0000-0000-000000000001",
+        "subject": payload.subject,
+        "sender": {"emailAddress": {"address": payload.sender}},
+        "receivedDateTime": None,
+        "bodyPreview": payload.body,
+    }
+
+    email_summary = {
+        "subject": payload.subject,
+        "sender": payload.sender,
+        "body_preview": payload.body[:500],
+    }
+
+    if not func_decls:
+        return {
+            "email": email_summary,
+            "extracted_data": {},
+            "api_payload_preview": {},
+            "error": "No function declarations configured for this workflow.",
+        }
+
+    try:
+        # Build a minimal mailbox config for model resolution
+        mailbox_config = None
+        try:
+            from ..config.db_loader import _row_to_config
+            mailbox_config = _row_to_config(inbox_row)
+        except Exception:
+            pass
+
+        extracted = extract_with_function_calling(
+            mock_email, extraction_prompt_body, func_decls, mailbox_config
+        )
+    except ValueError as e:
+        msg = str(e)
+        if any(x in msg for x in ("VERTEX_PROJECT", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_API_KEY")):
+            raise HTTPException(status_code=503, detail=msg) from e
+        raise HTTPException(status_code=400, detail=msg) from e
+    except Exception as e:
+        return {
+            "email": email_summary,
+            "extracted_data": {},
+            "api_payload_preview": {},
+            "error": str(e),
+        }
+
+    api_payload = {
+        "email_id": mock_email["id"],
+        "mailbox_id": inbox_row.get("mailbox_id", ""),
+        "category": wf.get("trigger_categories", ["unknown"])[0],
+        "extracted_data": extracted,
+        "subject": payload.subject,
+        "sender": payload.sender,
+        "received_date_time": None,
+    }
+
+    return {
+        "email": email_summary,
+        "extracted_data": extracted,
+        "api_payload_preview": api_payload,
+        "error": None,
+    }
+
+
 @app.on_event("startup")
 def startup() -> None:
     db.init_db()

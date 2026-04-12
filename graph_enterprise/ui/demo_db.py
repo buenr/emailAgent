@@ -30,8 +30,9 @@ _state: Dict[str, Any] = {
     "run_logs": [],
     "message_classifications": [],
     "models": [],
-    "next_id": {"prompt": 1, "set": 1, "cat": 1, "inbox": 1, "runlog": 1, "msgcls": 1, "model": 1},
+    "next_id": {"prompt": 1, "set": 1, "cat": 1, "inbox": 1, "runlog": 1, "msgcls": 1, "model": 1, "agentic": 1},
     "settings": {"global_polling_paused": "false", "agent_api_configs": "[]"},
+    "agentic_workflows": [],
     "initialized": False,
 }
 
@@ -1030,3 +1031,139 @@ def list_distinct_categories_by_inbox(inbox_id: int) -> List[str]:
                 if c:
                     cats.add(c)
         return sorted(cats)
+
+
+# --- Agentic workflows (in-memory) ---
+
+
+def _agentic_by_id(wid: int) -> Optional[Dict[str, Any]]:
+    for w in _state["agentic_workflows"]:
+        if int(w["id"]) == wid:
+            return w
+    return None
+
+
+def _normalize_agentic_json(r: Dict[str, Any]) -> None:
+    r["is_active"] = bool(r.get("is_active"))
+    for col in ("trigger_categories", "function_declarations", "agent_api_names"):
+        raw = r.get(col)
+        if isinstance(raw, str):
+            try:
+                r[col] = json.loads(raw)
+            except Exception:
+                r[col] = []
+        elif raw is None:
+            r[col] = []
+
+
+def list_agentic_workflows() -> List[Dict[str, Any]]:
+    with _lock:
+        out = []
+        for w in sorted(_state["agentic_workflows"], key=lambda x: (str(x.get("name", "")), x["id"])):
+            r = dict(w)
+            # join inbox and prompt names
+            inv = _inbox_by_id(int(r["inbox_id"]))
+            pt = _prompt_by_id(int(r["extraction_prompt_id"]))
+            r["inbox_mailbox_id"] = inv["mailbox_id"] if inv else ""
+            r["extraction_prompt_name"] = pt["name"] if pt else ""
+            _normalize_agentic_json(r)
+            out.append(r)
+        return out
+
+
+def get_agentic_workflow(workflow_id: int) -> Optional[Dict[str, Any]]:
+    with _lock:
+        w = _agentic_by_id(workflow_id)
+        if not w:
+            return None
+        r = dict(w)
+        inv = _inbox_by_id(int(r["inbox_id"]))
+        pt = _prompt_by_id(int(r["extraction_prompt_id"]))
+        r["inbox_mailbox_id"] = inv["mailbox_id"] if inv else ""
+        r["extraction_prompt_name"] = pt["name"] if pt else ""
+        _normalize_agentic_json(r)
+        return r
+
+
+def get_agentic_workflow_for_inbox(inbox_id: int) -> Optional[Dict[str, Any]]:
+    """Return the first active agentic workflow for an inbox."""
+    with _lock:
+        for w in _state["agentic_workflows"]:
+            if int(w["inbox_id"]) == inbox_id and w.get("is_active"):
+                r = dict(w)
+                pt = _prompt_by_id(int(r["extraction_prompt_id"]))
+                r["extraction_prompt_body"] = pt["body"] if pt else ""
+                _normalize_agentic_json(r)
+                return r
+    return None
+
+
+def create_agentic_workflow(
+    *,
+    inbox_id: int,
+    name: str,
+    extraction_prompt_id: int,
+    trigger_categories_json: str,
+    function_declarations_json: Optional[str],
+    agent_api_names_json: str,
+    webhook_url: Optional[str],
+    is_active: bool = True,
+) -> int:
+    with _lock:
+        if not _inbox_by_id(inbox_id):
+            raise DemoIntegrityError("inbox fk")
+        if not _prompt_by_id(extraction_prompt_id):
+            raise DemoIntegrityError("prompt fk")
+        now = _now_iso()
+        wid = _state["next_id"]["agentic"]
+        _state["next_id"]["agentic"] += 1
+        _state["agentic_workflows"].append({
+            "id": wid,
+            "inbox_id": inbox_id,
+            "name": name,
+            "extraction_prompt_id": extraction_prompt_id,
+            "trigger_categories": trigger_categories_json,
+            "function_declarations": function_declarations_json,
+            "agent_api_names": agent_api_names_json,
+            "webhook_url": webhook_url,
+            "is_active": is_active,
+            "created_at": now,
+            "updated_at": now,
+        })
+        return wid
+
+
+def update_agentic_workflow(
+    workflow_id: int,
+    *,
+    inbox_id: int,
+    name: str,
+    extraction_prompt_id: int,
+    trigger_categories_json: str,
+    function_declarations_json: Optional[str],
+    agent_api_names_json: str,
+    webhook_url: Optional[str],
+    is_active: bool = True,
+) -> None:
+    with _lock:
+        w = _agentic_by_id(workflow_id)
+        if not w:
+            raise KeyError(workflow_id)
+        w.update({
+            "inbox_id": inbox_id,
+            "name": name,
+            "extraction_prompt_id": extraction_prompt_id,
+            "trigger_categories": trigger_categories_json,
+            "function_declarations": function_declarations_json,
+            "agent_api_names": agent_api_names_json,
+            "webhook_url": webhook_url,
+            "is_active": is_active,
+            "updated_at": _now_iso(),
+        })
+
+
+def delete_agentic_workflow(workflow_id: int) -> None:
+    with _lock:
+        _state["agentic_workflows"] = [
+            w for w in _state["agentic_workflows"] if int(w["id"]) != workflow_id
+        ]

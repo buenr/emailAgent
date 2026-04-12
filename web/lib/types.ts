@@ -195,3 +195,44 @@ export type ClassificationRow = {
 };
 
 export type ClassificationsResponse = PaginatedResponse<ClassificationRow>;
+
+/* ------------------------------------------------------------------ */
+/*  Agentic workflow types                                             */
+/* ------------------------------------------------------------------ */
+
+export type FunctionParameter = {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+};
+
+export type FunctionDeclarationConfig = {
+  name: string;
+  description: string;
+  parameters: FunctionParameter[];
+};
+
+export type AgenticWorkflow = {
+  id: number;
+  inbox_id: number;
+  name: string;
+  extraction_prompt_id: number;
+  trigger_categories: string[];
+  function_declarations: FunctionDeclarationConfig[];
+  agent_api_names: string[];
+  webhook_url?: string;
+  is_active: boolean;
+  // Joined display names
+  inbox_mailbox_id?: string;
+  extraction_prompt_name?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type DryRunResult = {
+  email: { subject: string; sender: string; body_preview: string };
+  extracted_data: Record<string, unknown>;
+  api_payload_preview: Record<string, unknown>;
+  error?: string | null;
+};
