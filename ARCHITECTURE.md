@@ -25,7 +25,7 @@ graph TD
 
     subgraph External ["External Integrations"]
         Graph[Microsoft Graph API]
-        Gemini[Google Vertex AI (Gemini)]
+        Gemini["Google Vertex AI (Gemini)"]
         Webhooks[Agent Webhooks]
     end
 
