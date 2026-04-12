@@ -42,7 +42,14 @@ export default function LoginPage() {
     }
     fetch(`${apiBaseUrl}/api/health`, { cache: "no-store" })
       .then((r) => r.json() as Promise<Health>)
-      .then((h) => setAuthDisabled(Boolean(h.admin_auth_disabled)))
+      .then((h) => {
+        const disabled = Boolean(h.admin_auth_disabled);
+        setAuthDisabled(disabled);
+        // If auth is disabled and we're not loading, auto-bypass
+        if (disabled) {
+          devBypass();
+        }
+      })
       .catch(() => setAuthDisabled(false));
   }, [router]);
 

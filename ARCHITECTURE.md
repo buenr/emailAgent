@@ -1,6 +1,6 @@
 ```mermaid
 graph TD
-    subgraph Frontend ["Web Interface (Next.js)"]
+    subgraph Frontend ["Web Interface (Next.js 16.2)"]
         UI[Admin Dashboard]
         Config[Workflow & Prompt Config]
         Stats[Analytics & Logs]

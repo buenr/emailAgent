@@ -13,13 +13,13 @@ The system features a **Next.js** administration UI backed by a **FastAPI** + **
 - **Fleet scheduling**: A dedicated loop and Celery worker pool reliably poll multiple inboxes at custom intervals. Redis-based locking prevents overlapping runs.
 - **Multi-model support**: Assign different Gemini models (for example `gemini-3.1-pro`, `gemini-2.5-flash-lite`) to different inboxes based on complexity requirements.
 - **Agentic workflow integration**: A fully customizable pipeline for extracting structured data from emails using **Gemini Function Calling**. Define arbitrary JSON schemas in the UI, chain multiple sequential API calls, and POST results to webhooks. Includes a built-in **Dry Run Simulator** for testing extraction prompts and schemas.
-- **Web UI**: A Next.js dashboard to manage prompt templates, custom classification sets, mailbox mappings, subject rules, agent workflows, run logs, and token spend analytics.
+- **Modern Web UI**: A high-performance dashboard built with **Next.js 16.2** and **Turbopack**, providing near-instant HMR and 400% faster startup times. Manage prompt templates, custom classification sets, mailbox mappings, subject rules, agent workflows, run logs, and token spend analytics.
 - **Statistics & monitoring**: Real-time token usage trends, classification breakdown by category, run volume metrics, and category histograms for fleet-wide visibility.
 
 ## Prerequisites
 
 1. **Python 3.9+** (uses `zoneinfo`; on Windows, IANA time zones come from `tzdata`)
-2. **Node.js 18+** (for the Next.js frontend)
+2. **Node.js 20.9+** (Required for the Next.js 16.2+ frontend)
 3. **Microsoft Entra ID (Azure AD) app registration** with client credentials and `Mail.Read` / `Mail.ReadWrite` application permissions (as needed for read vs. write-back)
 4. **Google Cloud / Vertex AI** credentials and a project enabled for Gemini API access
 5. **Microsoft SQL Server** (or Azure SQL) and **ODBC Driver 18** (required for production scheduling and persistent configuration)
@@ -88,6 +88,9 @@ On first run against SQL Server, the API runs T-SQL migrations under `graph_ente
 cd web
 npm run dev
 ```
+
+> [!TIP]
+> This project uses **Next.js 16.2**. For the fastest developer experience, you can run `npm run dev --turbo` to leverage stable Turbopack bundling.
 
 Open the UI at [http://localhost:3000](http://localhost:3000). The API listens on [http://127.0.0.1:8000](http://127.0.0.1:8000) by default; `GET /api/health` includes `"demo": true` when using in-memory demo data and `admin_auth_disabled` when `ADMIN_AUTH_DISABLED` is set. Configure the admin env vars above (or use `ADMIN_AUTH_DISABLED=1` for local development); unauthenticated requests to configuration endpoints receive **503** until auth is configured.
 

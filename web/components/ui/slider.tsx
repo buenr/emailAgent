@@ -1,5 +1,5 @@
+import * as React from "react"
 import { Slider as SliderPrimitive } from "@base-ui/react/slider"
-
 import { cn } from "@/lib/utils"
 
 function Slider({
@@ -10,11 +10,21 @@ function Slider({
   max = 100,
   ...props
 }: SliderPrimitive.Root.Props) {
+  const [isMounted, setIsMounted] = React.useState(false)
+
+  React.useEffect(() => {
+    setIsMounted(true)
+  }, [])
+
   const _values = Array.isArray(value)
     ? value
     : Array.isArray(defaultValue)
       ? defaultValue
       : [min, max]
+
+  if (!isMounted) {
+    return <div className={cn("h-1 w-full bg-muted rounded-full", className)} />
+  }
 
   return (
     <SliderPrimitive.Root
