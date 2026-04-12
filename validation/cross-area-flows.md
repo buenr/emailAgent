@@ -78,52 +78,19 @@ full-reload navigation events
 
 ---
 
-### VAL-CROSS-004: ETA config fields appear in inbox form and are included in export bundle
+### VAL-CROSS-004: Agent API configuration appears in inbox workflow and is included in export bundle
 
-An inbox that has been configured with ETA fields (lookup enabled, API URL,
-API key, draft enabled) via the inbox edit form must carry those same ETA
-fields when exported through the "Export Configuration" flow. This validates
-that the same data model is shared between the CRUD form (M4 ETA config)
-and the export endpoint (M4 export).
+An inbox that has been configured to use external agent APIs via the inbox edit form must carry the workflow configuration correctly when exported through the "Export Configuration" flow. This validates that the same agent config model is shared between the CRUD form and the export endpoint.
 
-1. Edit an inbox, set `eta_lookup_enabled=true`, provide an API URL and
-   key, set `eta_draft_enabled=false`, and save.
+1. Edit an inbox and configure it for external agent workflow use.
 2. Trigger the "Export Configuration" download.
 3. Open the downloaded JSON file and locate the inbox entry.
 
-**Pass:** The exported JSON for the edited inbox includes all four ETA
-fields with values exactly matching what was saved in the form.
-**Fail:** Any ETA field is missing from the export, has a null value, or
-does not match the saved form state.
+**Pass:** The exported JSON for the edited inbox includes the agent workflow-related configuration with values matching what was saved in the form.
+**Fail:** Any workflow config field is missing from the export, has a null value, or does not match the saved form state.
 
 Tool: agent-browser  
-Evidence: screenshot of inbox edit form with ETA fields filled; screenshot
-of export download; excerpt of exported JSON showing the inbox with ETA
-fields
-
----
-
-### VAL-CROSS-005: Import with ETA fields populates inbox ETA config correctly
-
-Importing a configuration bundle that contains inboxes with ETA fields must
-result in those inboxes being fully editable in the UI with the correct ETA
-field values pre-populated in the edit form. After import:
-
-1. POST `/api/import` with a bundle containing at least one inbox that has
-   `eta_lookup_enabled=true`, `eta_lookup_api_url`, `eta_lookup_api_key`,
-   and `eta_draft_enabled` set.
-2. Navigate to the imported inbox's edit form in the UI.
-
-**Pass:** The inbox edit form shows "ETA Lookup Enabled" checked, the API
-URL and API key fields populated with the imported values, and "ETA Draft
-Enabled" reflecting the imported toggle state. GET `/api/inboxes/{id}`
-confirms the values match the import bundle.
-**Fail:** ETA fields in the edit form are blank/default, or the GET
-response lacks ETA fields.
-
-Tool: agent-browser  
-Evidence: screenshot of inbox edit form after import showing populated ETA
-fields; GET response body confirming ETA field values
+Evidence: screenshot of inbox edit form with agent workflow settings filled; screenshot of export download; excerpt of exported JSON showing the inbox configuration
 
 ---
 
@@ -156,7 +123,7 @@ Now button on the activated inbox; network call showing Run Now POST and
 ### VAL-CROSS-007: Toast notifications render consistently across all pages
 
 Shadcn/ui `<Toast>` notifications must function identically on the
-dashboard, classification results viewer, inbox edit form, and ETA/export
+dashboard, classification results viewer, inbox edit form, and agent workflow/export
 settings page. The test triggers a toast-generating action on each page:
 
 - Dashboard: bulk-activate inboxes → success toast
@@ -186,7 +153,7 @@ surfaces must render in dark theme with consistent color tokens:
 1. Dashboard: chart backgrounds, card surfaces, and text use dark palette.
 2. Classification results viewer: table rows, status badges, and detail
    panels use dark palette.
-3. ETA config section: form labels, inputs, toggles, and section headers
+3. Agent workflow configuration section: form labels, inputs, toggles, and section headers
    use dark palette.
 4. Export/Import page: buttons, file-drop zone, and status messages use
    dark palette.
@@ -199,7 +166,7 @@ and axis labels. Form inputs show dark fill with light placeholder text.
 mode, or charts show light grid/axis styling.
 
 Tool: agent-browser  
-Evidence: four screenshots (dashboard, classification results, ETA config
+Evidence: four screenshots (dashboard, classification results, agent workflow config
 form, export page) all in dark mode; CSS computed styles showing dark token
 values on sampled elements
 
@@ -241,15 +208,12 @@ changes via the UI, then exports again, the second export must reflect all
 intervening modifications.
 
 1. Click "Export Configuration" and save the first JSON file.
-2. Edit an inbox: change its classification set, toggle ETA lookup on, and
-   update the ETA API URL.
+2. Edit an inbox: change its classification set, enable the configured agent workflow, and update the agent workflow URL.
 3. Click "Export Configuration" again and save the second JSON file.
 4. Diff the two files for the modified inbox.
 
-**Pass:** The second export JSON shows the updated `classification_set_id`,
-`eta_lookup_enabled: true`, and the new `eta_lookup_api_url` for the
-modified inbox. All other inboxes and entities remain unchanged between
-the two exports.
+**Pass:** The second export JSON shows the updated `classification_set_id`
+and the updated agent workflow settings for the modified inbox. All other inboxes and entities remain unchanged between the two exports.
 **Fail:** The second export still contains the old values, or unmodified
 entities are unexpectedly altered.
 
@@ -263,7 +227,7 @@ diff highlighting the changed fields
 ### VAL-CROSS-011: Navigation highlighting persists across deep-linked pages
 
 When a user navigates from the dashboard to a deep-linked sub-page (e.g.,
-classification results for a specific inbox, or the ETA config section of
+classification results for a specific inbox, or the agent workflow config section of
 an inbox edit form), the sidebar or top-nav must continue to highlight the
 correct parent section (e.g., "Dashboard" remains highlighted when viewing
 classification results that were reached from the dashboard).

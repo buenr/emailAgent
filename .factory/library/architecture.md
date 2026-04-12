@@ -42,7 +42,7 @@ The frontend communicates exclusively with the FastAPI backend; it never calls M
 | `/prompts` | CRUD for Jinja-like prompt templates |
 | `/classifications` | CRUD for classification sets and their taxonomy rows |
 | `/models` | CRUD for Gemini model aliases (e.g., `gemini-2.5-flash-lite`) |
-| `/inboxes` | CRUD for inbox mappings with fetch filters, subject rules, ETA config |
+| `/inboxes` | CRUD for inbox mappings with fetch filters and subject rules |
 
 ### Key Components
 
@@ -89,7 +89,7 @@ All CRUD functions accept an open connection and return plain dicts. The module 
 ### Pydantic Models (`graph_enterprise/config/models.py`)
 
 Core domain models:
-- **MailboxPipelineConfig** — Top-level per-inbox configuration: mailbox ID, categories, run policy, prompt template, Gemini model, fetch filter, subject rules, ETA fields.
+- **MailboxPipelineConfig** — Top-level per-inbox configuration: mailbox ID, categories, run policy, prompt template, Gemini model, fetch filter, and subject rules.
 - **InboxFetchFilter** — Microsoft Graph `$filter` / `$search` predicates: time window mode, sender allow/deny lists, subject/body keywords, importance, attachment filter, category include/exclude.
 - **SubjectClassifyRule** — SQL `LIKE` pattern + target category for hybrid classification (pre-LLM fast path).
 - **RunPolicy** — Polling interval, message cap, timezone, folder, write-back concurrency.
@@ -116,19 +116,19 @@ Auth → Fetch → Preprocess → Subject Rules → Gemini Classify → Write-Ba
 6. **Write-Back** (`microsoft_graph/writeback.py`): `patch_message_categories` merges predicted categories (prefixed with `AI-`) onto each message in Exchange via PATCH.
 7. **Log** (`observability/run_log.py`): Structured JSON run record with metrics (fetched, classified, tagged, tokens, latency, histogram).
 
-### ETA Pipeline (post-classification)
+### Agent Workflow (post-classification)
 
-Messages classified as `ETAOrTracking` enter a second pipeline:
+Messages classified as `ETAOrTracking` are optionally routed into a post-classification agent workflow.
 
 ```
-Extract Ref Numbers → API Lookup → Draft Reply
+Extract Ref Numbers → External Agent API Call → Draft Reply
 ```
 
 1. **Extract** (`classification/eta_extractor.py`): Gemini function calling extracts order, BOL, PRO, truck, and trailer numbers from the email body.
-2. **Lookup** (`eta_lookup/api_client.py`): An HTTP client calls an external freight API with the extracted reference numbers, returning structured status data.
-3. **Draft** (`microsoft_graph/draft.py`): Uses Graph `createReply` to create a draft reply in Outlook, then PATCHes the draft body with an HTML summary of reference numbers and lookup results.
+2. **Agent API Call** (`graph_enterprise/agent_workflow/orchestrator.py`): The workflow builds a structured payload from extracted reference numbers and message metadata, then dispatches it to configured external agent endpoints.
+3. **Draft** (`microsoft_graph/draft.py`): Uses Graph `createReply` to create a draft reply in Outlook, then patches the draft body with a formatted summary of the agent workflow result.
 
-Each step is wrapped in try/except so that ETA failures never break the main classification run. The pipeline is gated by per-inbox `eta_lookup_enabled` and `eta_draft_enabled` flags.
+Failures in the agent workflow are logged but do not break the main classification run.
 
 ---
 
@@ -154,11 +154,11 @@ Microsoft Exchange
        ▼
   Write-Back ─── PATCH `AI-<Category>` onto message in Exchange
        │
-       ▼ (if category == ETAOrTracking and ETA enabled)
-  ETA Extractor ─── Gemini function calling → ref numbers
+       ▼ (if category == ETAOrTracking and agent workflow is configured)
+  Agent Extractor ─── Gemini function calling → ref numbers
        │
        ▼
-  ETA Lookup API ─── external freight status call
+  Agent API Call ─── external endpoint invocation
        │
        ▼
   Draft Reply ─── createReply + PATCH body in Outlook
@@ -171,8 +171,8 @@ SQL Server ──▶ db_loader.py ──▶ MailboxPipelineConfig
                                     │
                      ┌──────────────┼──────────────┐
                      ▼              ▼              ▼
-               GraphFetcher    GeminiBatch     ETAPipeline
-               (fetch filter)  (schema, prompt) (API URL/key)
+               GraphFetcher    GeminiBatch     AgentWorkflow
+               (fetch filter)  (schema, prompt) (agent configs)
 ```
 
 Admin changes in the Next.js UI flow as:
@@ -223,14 +223,14 @@ A new `message_classification` table persists individual classification results 
 - `POST /api/inboxes/bulk-activate` and `POST /api/inboxes/bulk-delete` accept arrays of inbox IDs.
 - UI presents checkboxes on inbox rows and a floating action bar with activate/delete actions and confirmation dialogs.
 
-### ETA Configuration
+### Agent API Configuration
 
-- Inbox CRUD forms now include an "ETA Pipeline" section with four fields: `eta_lookup_enabled` (toggle), `eta_lookup_api_url` (text), `eta_lookup_api_key` (password-masked), `eta_draft_enabled` (toggle, defaults on).
-- These fields are persisted alongside the inbox row and consumed by `eta_pipeline.py`.
+- The UI includes a dedicated Agent APIs page for defining external agent endpoints used by post-classification workflows.
+- Configured agent API entries are persisted in app settings and consumed by `graph_enterprise/agent_workflow/orchestrator.py`.
 
 ### Export / Import
 
-- `GET /api/export` produces a JSON snapshot of all configuration (prompt templates, classification sets, inboxes with ETA fields, app models).
+- `GET /api/export` produces a JSON snapshot of all configuration (prompt templates, classification sets, inboxes, app models).
 - `POST /api/import` accepts the same JSON shape and upserts into the database, enabling configuration portability across environments.
 - UI surfaces with download/upload controls.
 
@@ -241,7 +241,7 @@ A new `message_classification` table persists individual classification results 
 - **AI- prefix**: All categories written back to Outlook are prefixed with `AI-` to distinguish model predictions from human-assigned labels. The prefix is applied in `writeback.py` and stripped when loading from config.
 - **Demo mode is ephemeral**: Without `MSSQL_ODBC_CONNECTION_STRING`, the entire backend operates in-memory. Changes are lost on restart.
 - **Subject rules bypass LLM**: When a subject rule matches, the message is classified immediately and the Gemini call is skipped. This is an intentional optimization for predictable traffic.
-- **ETA failures are non-fatal**: Each step in the ETA pipeline (extract, lookup, draft) catches its own exceptions. A failure in any ETA step is logged but does not affect the main classification run's success status.
+- **Agent workflow failures are non-fatal**: Each step in the agent workflow catches its own exceptions. A failure in any agent step is logged but does not affect the main classification run's success status.
 - **One token source**: The frontend stores exactly one JWT in `sessionStorage`. Its absence redirects to `/login`; its expiry returns 401 and clears storage.
 - **Write-back is opt-in**: `graph_write_back_enabled` on each inbox controls whether categories are PATCHed back to Exchange. When disabled, the pipeline runs in dry-run mode (classify only).
 - **Run locks prevent overlap**: Redis-based locks ensure that only one worker processes a given inbox at a time. The scheduler skips enqueue when a lock is already held.

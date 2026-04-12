@@ -33,6 +33,7 @@ from ..config.db_loader import (
     load_mailbox_config_by_inbox_id,
     load_mailbox_config_from_db,
 )
+from ..agent_workflow import run_agent_workflow
 from ..ui import db as db_store
 from ..config.models import FetchTimeWindowMode, InboxFetchFilter, MailboxPipelineConfig, RunPolicy
 from ..microsoft_graph.fetch import GraphMessageFetcher
@@ -343,33 +344,31 @@ def run_pipeline_stub(
                     else:
                         failures += 1
 
-            # ETA pipeline: extract ref numbers → API lookup → draft reply
-            # for messages classified as ETAOrTracking when enabled.
-            eta_preds = [p for p in pred_list if p.get("category") == "ETAOrTracking"]
-            if eta_preds and mailbox.eta_lookup_enabled:
+            # Agent workflow: extract ref numbers for ETAOrTracking messages and invoke configured APIs.
+            agent_preds = [p for p in pred_list if p.get("category") == "ETAOrTracking"]
+            if agent_preds:
                 try:
-                    from ..jobs.eta_pipeline import run_eta_pipeline
-                    eta_results = run_eta_pipeline(
-                        mailbox, client, eta_preds, messages_work
+                    agent_results = run_agent_workflow(
+                        mailbox, client, agent_preds, messages_work
                     )
-                    eta_ok = sum(1 for r in eta_results if r.success)
-                    eta_fail = len(eta_results) - eta_ok
+                    agent_ok = sum(1 for r in agent_results if r.success)
+                    agent_fail = len(agent_results) - agent_ok
                     logger.info(
-                        "ETA pipeline completed for %s: %s/%s drafts created",
+                        "Agent workflow completed for %s: %s/%s successful responses",
                         mailbox.mailbox_id,
-                        eta_ok,
-                        len(eta_results),
+                        agent_ok,
+                        len(agent_results),
                     )
-                    if eta_fail:
+                    if agent_fail:
                         logger.warning(
-                            "ETA pipeline: %s failures out of %s for %s",
-                            eta_fail,
-                            len(eta_results),
+                            "Agent workflow: %s failures out of %s for %s",
+                            agent_fail,
+                            len(agent_results),
                             mailbox.mailbox_id,
                         )
                 except Exception as exc:
                     logger.exception(
-                        "ETA pipeline failed (non-blocking) for %s: %s",
+                        "Agent workflow failed (non-blocking) for %s: %s",
                         mailbox.mailbox_id,
                         exc,
                     )
@@ -546,7 +545,7 @@ def _validate_vertex_env_for_classify() -> None:
 def _mailbox_from_env() -> MailboxPipelineConfig:
     """
     TARGET_MAILBOX — user or shared mailbox SMTP/UPN for Graph.
-    Defaults to Knight-Swift after-hours shared mailbox when unset or blank.
+    Defaults to Logistics/Trucking after-hours shared mailbox when unset or blank.
 
     Optional GRAPH_MAIL_FOLDER — well-known folder (default ``inbox``). Avoid ``all`` in
     scheduled runs: it uses ``/users/{{id}}/messages``, which spans Sent Items, Deleted

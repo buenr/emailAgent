@@ -76,7 +76,7 @@ def build_default_classification_system_instruction(
     categories: Sequence[CategoryDefinition],
 ) -> str:
     cat_doc = format_allowed_categories_documentation(categories)
-    return f"""You triage email for the Knight-Swift Transportation after-hours operations desk.
+    return f"""You triage email for Logistics/Trucking after-hours operations desk.
 The mailbox is {mailbox_id}. After-hours staff cover overnight and weekend freight operations:
 drivers in the field, equipment issues, load execution, and urgent customer or broker issues.
 
@@ -89,8 +89,7 @@ when possible—not only the subject line. Quoted or older messages set context 
 pick a category (e.g. **CustomsBorder**) just because the thread *below* discusses
 customs if the **newest** reply is about something else.
 
-**Driver vs ETAOrTracking:** If the latest message is **only** Knight-Swift
-or Swift Transportation employees reporting the driver’s **location, miles out, or ETA**
+**Driver vs ETAOrTracking:** If the latest message is **only** employees reporting the driver’s **location, miles out, or ETA**
 (including “driver tracking… ETA …”), prefer **Driver**—even when the subject or
 quoted thread is about customer delays or execution. Use **ETAOrTracking** for external
 or explicit “where is the truck/load” tracking follow-ups when that is the main ask.

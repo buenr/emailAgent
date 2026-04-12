@@ -219,12 +219,6 @@ export default function InboxesPage() {
     catEx: "",
   });
 
-  // ETA Pipeline state
-  const [etaLookupEnabled, setEtaLookupEnabled] = useState(false);
-  const [etaLookupApiUrl, setEtaLookupApiUrl] = useState("");
-  const [etaLookupApiKey, setEtaLookupApiKey] = useState("");
-  const [etaDraftEnabled, setEtaDraftEnabled] = useState(true);
-
   const fetchLists = useCallback(async (page: number) => {
     setError(null);
     try {
@@ -279,10 +273,6 @@ export default function InboxesPage() {
     setSubjectRules([{ pattern: "", category: "" }]);
     setFetchFilter(defaultFetchFilter());
     setFfLines({ allow: "", deny: "", subj: "", body: "", catIn: "", catEx: "" });
-    setEtaLookupEnabled(false);
-    setEtaLookupApiUrl("");
-    setEtaLookupApiKey("");
-    setEtaDraftEnabled(true);
   }, []);
 
   /**
@@ -379,11 +369,6 @@ export default function InboxesPage() {
       catIn: merged.category_include_any.join("\n"),
       catEx: merged.category_exclude_any.join("\n"),
     });
-    // ETA Pipeline
-    setEtaLookupEnabled(detail.eta_lookup_enabled === true);
-    setEtaLookupApiUrl(detail.eta_lookup_api_url ?? "");
-    setEtaLookupApiKey(detail.eta_lookup_api_key ?? "");
-    setEtaDraftEnabled(detail.eta_draft_enabled !== false);
 
     // Mark as populated so subsequent detail changes (e.g. from re-fetch) don't overwrite user edits
     lastPopulatedIdRef.current = selectedId;
@@ -517,10 +502,6 @@ export default function InboxesPage() {
           pattern: r.pattern.trim(),
           category: r.category.trim(),
         })),
-      eta_lookup_enabled: etaLookupEnabled,
-      eta_lookup_api_url: etaLookupEnabled ? etaLookupApiUrl : "",
-      eta_lookup_api_key: etaLookupEnabled ? etaLookupApiKey : "",
-      eta_draft_enabled: etaDraftEnabled,
     };
 
     setSaving(true);
@@ -1341,61 +1322,6 @@ export default function InboxesPage() {
               </div>
             </div>
           </details>
-
-          {/* ETA Pipeline section */}
-          <div className="rounded-md border border-slate-800 bg-slate-950/30 px-4 py-4">
-            <Label className="mb-3 block text-sm font-medium text-slate-200">ETA Pipeline</Label>
-            <div className="space-y-4">
-              <Label className="flex cursor-pointer items-center gap-2 text-sm font-normal text-slate-300">
-                <Checkbox
-                  id="inbox-eta-enabled"
-                  checked={etaLookupEnabled}
-                  onCheckedChange={(checked) => {
-                    const on = !!checked;
-                    setEtaLookupEnabled(on);
-                    if (!on) {
-                      setEtaLookupApiUrl("");
-                      setEtaLookupApiKey("");
-                    }
-                  }}
-                />
-                Enable ETA Lookup
-              </Label>
-
-              <div className="grid gap-4 sm:grid-cols-2 pl-6">
-                <div>
-                  <Label htmlFor="inbox-eta-url" className="mb-1 block text-sm text-slate-400">API URL</Label>
-                  <Input
-                    id="inbox-eta-url"
-                    placeholder="https://eta-api.example.com/lookup"
-                    value={etaLookupApiUrl}
-                    onChange={(e) => setEtaLookupApiUrl(e.target.value)}
-                    disabled={!etaLookupEnabled}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="inbox-eta-key" className="mb-1 block text-sm text-slate-400">API Key</Label>
-                  <Input
-                    id="inbox-eta-key"
-                    type="password"
-                    placeholder="••••••••"
-                    value={etaLookupApiKey}
-                    onChange={(e) => setEtaLookupApiKey(e.target.value)}
-                    disabled={!etaLookupEnabled}
-                  />
-                </div>
-              </div>
-
-              <Label className="flex cursor-pointer items-center gap-2 text-sm font-normal text-slate-300">
-                <Checkbox
-                  id="inbox-eta-draft"
-                  checked={etaDraftEnabled}
-                  onCheckedChange={(checked) => setEtaDraftEnabled(!!checked)}
-                />
-                Auto-create draft reply
-              </Label>
-            </div>
-          </div>
 
           <div className="flex items-center justify-between border-t border-slate-800 pt-6">
             <div className="flex items-center gap-3">

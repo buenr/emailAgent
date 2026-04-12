@@ -141,7 +141,6 @@ def _mssql_apply_sql_files(conn: Any) -> None:
         "004_inbox_subject_classify.sql",
         "005_run_log_category_histogram.sql",
         "006_message_classification.sql",
-        "007_inbox_eta_pipeline.sql",
     ):
         p = base / fname
         if not p.exists():
@@ -277,10 +276,6 @@ def _normalize_inbox_row(r: Dict[str, Any]) -> None:
     r["graph_write_back_enabled"] = bool(r.get("graph_write_back_enabled", True))
     if "subject_classify_enabled" in r:
         r["subject_classify_enabled"] = bool(r.get("subject_classify_enabled"))
-    if "eta_lookup_enabled" in r:
-        r["eta_lookup_enabled"] = bool(r.get("eta_lookup_enabled"))
-    if "eta_draft_enabled" in r:
-        r["eta_draft_enabled"] = bool(r.get("eta_draft_enabled", True))
     for k in ("last_run_at", "next_run_at"):
         v = r.get(k)
         if isinstance(v, datetime):
@@ -348,7 +343,6 @@ def list_inboxes(
         "i.timezone, i.mail_folder, i.max_messages_per_run, i.patch_max_workers, "
         "i.polling_interval_minutes, i.is_active, i.graph_write_back_enabled, i.last_run_at, i.next_run_at, "
         "i.fetch_filter_json, i.subject_classify_enabled, i.subject_classify_rules_json, "
-        "i.eta_lookup_enabled, i.eta_lookup_api_url, i.eta_lookup_api_key, i.eta_draft_enabled, "
         "pt.name AS prompt_name, cs.name AS classification_set_name, "
         "am.name AS app_model_name, i.app_model_id "
         "FROM inbox i "
@@ -404,10 +398,6 @@ def create_inbox(
     fetch_filter_json: Optional[str] = None,
     subject_classify_enabled: bool = False,
     subject_classify_rules_json: Optional[str] = None,
-    eta_lookup_enabled: bool = False,
-    eta_lookup_api_url: Optional[str] = None,
-    eta_lookup_api_key: Optional[str] = None,
-    eta_draft_enabled: bool = True,
 ) -> int:
     if _demo(conn):
         return demo_db.create_inbox(
@@ -425,10 +415,6 @@ def create_inbox(
             fetch_filter_json=fetch_filter_json,
             subject_classify_enabled=subject_classify_enabled,
             subject_classify_rules_json=subject_classify_rules_json,
-            eta_lookup_enabled=eta_lookup_enabled,
-            eta_lookup_api_url=eta_lookup_api_url,
-            eta_lookup_api_key=eta_lookup_api_key,
-            eta_draft_enabled=eta_draft_enabled,
         )
     now = _now_iso()
     next_run = now
@@ -438,9 +424,8 @@ def create_inbox(
         "mail_folder, max_messages_per_run, patch_max_workers, polling_interval_minutes, "
         "is_active, graph_write_back_enabled, next_run_at, fetch_filter_json, "
         "subject_classify_enabled, subject_classify_rules_json, "
-        "eta_lookup_enabled, eta_lookup_api_url, eta_lookup_api_key, eta_draft_enabled, "
         "created_at, updated_at) "
-        "OUTPUT INSERTED.id AS id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "OUTPUT INSERTED.id AS id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             mailbox_id,
             prompt_template_id,
@@ -457,10 +442,6 @@ def create_inbox(
             fetch_filter_json,
             1 if subject_classify_enabled else 0,
             subject_classify_rules_json,
-            1 if eta_lookup_enabled else 0,
-            eta_lookup_api_url,
-            eta_lookup_api_key,
-            1 if eta_draft_enabled else 0,
             now,
             now,
         ),
@@ -487,10 +468,6 @@ def update_inbox(
     fetch_filter_json: Optional[str] = None,
     subject_classify_enabled: bool = False,
     subject_classify_rules_json: Optional[str] = None,
-    eta_lookup_enabled: bool = False,
-    eta_lookup_api_url: Optional[str] = None,
-    eta_lookup_api_key: Optional[str] = None,
-    eta_draft_enabled: bool = True,
 ) -> None:
     if _demo(conn):
         demo_db.update_inbox(
@@ -509,10 +486,6 @@ def update_inbox(
             fetch_filter_json=fetch_filter_json,
             subject_classify_enabled=subject_classify_enabled,
             subject_classify_rules_json=subject_classify_rules_json,
-            eta_lookup_enabled=eta_lookup_enabled,
-            eta_lookup_api_url=eta_lookup_api_url,
-            eta_lookup_api_key=eta_lookup_api_key,
-            eta_draft_enabled=eta_draft_enabled,
         )
         return
     _execute(
@@ -521,7 +494,6 @@ def update_inbox(
         "timezone = ?, mail_folder = ?, max_messages_per_run = ?, patch_max_workers = ?, "
         "polling_interval_minutes = ?, is_active = ?, graph_write_back_enabled = ?, fetch_filter_json = ?, "
         "subject_classify_enabled = ?, subject_classify_rules_json = ?, "
-        "eta_lookup_enabled = ?, eta_lookup_api_url = ?, eta_lookup_api_key = ?, eta_draft_enabled = ?, "
         "updated_at = ? WHERE id = ?",
         (
             mailbox_id,
@@ -538,10 +510,6 @@ def update_inbox(
             fetch_filter_json,
             1 if subject_classify_enabled else 0,
             subject_classify_rules_json,
-            1 if eta_lookup_enabled else 0,
-            eta_lookup_api_url,
-            eta_lookup_api_key,
-            1 if eta_draft_enabled else 0,
             _now_iso(),
             inbox_id,
         ),
@@ -594,7 +562,6 @@ def get_inbox_config(conn: Any, mailbox_id: str) -> Optional[Dict[str, Any]]:
         "i.patch_max_workers, i.polling_interval_minutes, i.is_active, i.graph_write_back_enabled, i.last_run_at, "
         "i.prompt_template_id, i.classification_set_id, i.app_model_id, i.fetch_filter_json, "
         "i.subject_classify_enabled, i.subject_classify_rules_json, "
-        "i.eta_lookup_enabled, i.eta_lookup_api_url, i.eta_lookup_api_key, i.eta_draft_enabled, "
         "pt.body AS prompt_template, am.name AS app_model_name "
         "FROM inbox i "
         "JOIN prompt_template pt ON pt.id = i.prompt_template_id "
@@ -610,10 +577,6 @@ def get_inbox_config(conn: Any, mailbox_id: str) -> Optional[Dict[str, Any]]:
     data["graph_write_back_enabled"] = bool(data.get("graph_write_back_enabled", True))
     if "subject_classify_enabled" in data:
         data["subject_classify_enabled"] = bool(data.get("subject_classify_enabled"))
-    if "eta_lookup_enabled" in data:
-        data["eta_lookup_enabled"] = bool(data.get("eta_lookup_enabled"))
-    if "eta_draft_enabled" in data:
-        data["eta_draft_enabled"] = bool(data.get("eta_draft_enabled", True))
     lr = data.get("last_run_at")
     if isinstance(lr, datetime):
         data["last_run_at"] = _api_utc_iso(lr)
@@ -633,7 +596,6 @@ def get_inbox_by_id(conn: Any, inbox_id: int) -> Optional[Dict[str, Any]]:
         "i.last_run_at, i.next_run_at, "
         "i.prompt_template_id, i.classification_set_id, i.app_model_id, i.fetch_filter_json, "
         "i.subject_classify_enabled, i.subject_classify_rules_json, "
-        "i.eta_lookup_enabled, i.eta_lookup_api_url, i.eta_lookup_api_key, i.eta_draft_enabled, "
         "pt.body AS prompt_template, am.name AS app_model_name "
         "FROM inbox i "
         "JOIN prompt_template pt ON pt.id = i.prompt_template_id "
@@ -647,10 +609,6 @@ def get_inbox_by_id(conn: Any, inbox_id: int) -> Optional[Dict[str, Any]]:
     data = dict(row)
     data["is_active"] = bool(data.get("is_active"))
     data["graph_write_back_enabled"] = bool(data.get("graph_write_back_enabled", True))
-    if "eta_lookup_enabled" in data:
-        data["eta_lookup_enabled"] = bool(data.get("eta_lookup_enabled"))
-    if "eta_draft_enabled" in data:
-        data["eta_draft_enabled"] = bool(data.get("eta_draft_enabled", True))
     for k in ("last_run_at", "next_run_at"):
         v = data.get(k)
         if isinstance(v, datetime):
@@ -671,7 +629,6 @@ def inbox_summary(conn: Any) -> List[Dict[str, Any]]:
         "am.name AS app_model_name, "
         "i.timezone, i.mail_folder, i.max_messages_per_run, i.patch_max_workers, "
         "i.polling_interval_minutes, i.is_active, i.last_run_at, i.next_run_at, "
-        "i.eta_lookup_enabled, i.eta_lookup_api_url, i.eta_lookup_api_key, i.eta_draft_enabled, "
         "(SELECT COUNT(*) FROM category c WHERE c.classification_set_id = cs.id) AS category_count "
         "FROM inbox i "
         "JOIN prompt_template pt ON pt.id = i.prompt_template_id "
@@ -682,10 +639,6 @@ def inbox_summary(conn: Any) -> List[Dict[str, Any]]:
     rows = _fetchall_dicts(cur)
     for r in rows:
         r["is_active"] = bool(r.get("is_active"))
-        if "eta_lookup_enabled" in r:
-            r["eta_lookup_enabled"] = bool(r.get("eta_lookup_enabled"))
-        if "eta_draft_enabled" in r:
-            r["eta_draft_enabled"] = bool(r.get("eta_draft_enabled", True))
         for k in ("last_run_at", "next_run_at"):
             v = r.get(k)
             if isinstance(v, datetime):
@@ -721,6 +674,50 @@ def set_global_polling_paused(conn: Any, paused: bool) -> None:
         cur.execute(
             "INSERT INTO app_setting ([key], [value]) VALUES (?, ?)",
             ("global_polling_paused", val),
+        )
+
+
+def get_agent_api_configs(conn: Any) -> List[Dict[str, str]]:
+    if _demo(conn):
+        return demo_db.get_agent_api_configs()
+    cur = _execute(conn, "SELECT [value] FROM app_setting WHERE [key] = ?", ("agent_api_configs",))
+    row = _fetchone_dict(cur)
+    if not row:
+        return []
+    raw = row.get("value")
+    if raw is None:
+        return []
+    try:
+        data = json.loads(str(raw))
+        if isinstance(data, list):
+            return [
+                {
+                    "name": str(item.get("name", "")),
+                    "api_url": str(item.get("api_url", "")),
+                    "api_key": str(item.get("api_key", "")),
+                }
+                for item in data
+                if isinstance(item, dict)
+            ]
+    except Exception:
+        pass
+    return []
+
+
+def set_agent_api_configs(conn: Any, configs: List[Dict[str, str]]) -> None:
+    if _demo(conn):
+        demo_db.set_agent_api_configs(configs)
+        return
+    payload = json.dumps(configs)
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE app_setting SET [value] = ? WHERE [key] = ?",
+        (payload, "agent_api_configs"),
+    )
+    if cur.rowcount == 0:
+        cur.execute(
+            "INSERT INTO app_setting ([key], [value]) VALUES (?, ?)",
+            ("agent_api_configs", payload),
         )
 
 

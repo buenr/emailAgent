@@ -299,9 +299,10 @@ class RunPolicy(BaseModel):
     patch_max_workers: int = Field(
         default=4,
         ge=1,
+        le=4,
         description=(
             "Max concurrent Microsoft Graph PATCH threads for category write-back; "
-            "keep low (e.g. 4) to reduce 429 throttling."
+            "limited to 4 by Microsoft Graph API rate limits."
         ),
     )
 
@@ -363,20 +364,4 @@ class MailboxPipelineConfig(BaseModel):
         default_factory=list,
         max_length=_MAX_SUBJECT_RULES,
         description="Ordered rules; first pattern match assigns category.",
-    )
-    eta_lookup_enabled: bool = Field(
-        default=False,
-        description="Enable ETA lookup + draft pipeline for ETAOrTracking emails.",
-    )
-    eta_lookup_api_url: Optional[str] = Field(
-        default=None,
-        description="External API base URL for ETA lookups.",
-    )
-    eta_lookup_api_key: Optional[str] = Field(
-        default=None,
-        description="API key or auth header value for ETA lookup API.",
-    )
-    eta_draft_enabled: bool = Field(
-        default=True,
-        description="Create draft reply when ETA lookup returns a result.",
     )

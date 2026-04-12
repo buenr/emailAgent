@@ -1,4 +1,4 @@
-"""Outlook category buckets for Knight-Swift after-hours shared mailbox classification."""
+"""Outlook category buckets for Logistics/Trucking after-hours shared mailbox classification."""
 
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ DEFAULT_CATEGORIES: list[CategoryDefinition] = [
             "Driver communications: check-calls, routing or directions, check-in at shipper/"
             "receiver, general field questions—when the thread is about routine operational status "
             "rather than welfare/safety. **Prefer this over ETAOrTracking** when the latest "
-            "message is only Knight-Swift or Swift Transportation staff relaying the driver’s "
+            "message is only Logistics/Trucking or Swift Transportation staff relaying the driver’s "
             "location, miles to destination, or ETA, even on customer-facing threads."
         ),
     ),

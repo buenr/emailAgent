@@ -12,7 +12,9 @@ The system features a **Next.js** administration UI backed by a **FastAPI** + **
 - **Advanced fetch filtering**: Configure robust Graph `$filter` and `$search` parameters per inbox (sender allow/deny lists, body keywords, attachment filters, importance levels).
 - **Fleet scheduling**: A dedicated loop and Celery worker pool reliably poll multiple inboxes at custom intervals. Redis-based locking prevents overlapping runs.
 - **Multi-model support**: Assign different Gemini models (for example `gemini-3.1-pro`, `gemini-2.5-flash-lite`) to different inboxes based on complexity requirements.
-- **Web UI**: A Next.js dashboard to manage prompt templates, custom classification sets, mailbox mappings, subject rules, and to monitor run logs and token spend.
+- **Agent workflow integration**: Extract reference numbers (order, BOL, PRO, truck, trailer) from emails using Gemini function calling, and integrate with external APIs via webhook configuration for downstream processing.
+- **Web UI**: A Next.js dashboard to manage prompt templates, custom classification sets, mailbox mappings, subject rules, agent workflows, run logs, and token spend analytics.
+- **Statistics & monitoring**: Real-time token usage trends, classification breakdown by category, run volume metrics, and category histograms for fleet-wide visibility.
 
 ## Prerequisites
 
@@ -95,7 +97,7 @@ Open the UI at [http://localhost:3000](http://localhost:3000). The API listens o
 python -m graph_enterprise.ui.seed
 ```
 
-Inserts Knight-Swift-oriented default categories, prompt template, and sample inbox (not used in demo mode).
+Inserts Logistics/Trucking-oriented default categories, prompt template, and sample inbox (not used in demo mode).
 
 ### 4. Running the scheduler and workers (production)
 
@@ -117,15 +119,29 @@ Redis ensures only one worker processes a given inbox at a time via run locks. T
 
 ---
 
-## Manual / CLI usage
+## Manual and on-demand runs
 
-You can run the pipeline as a one-off without Celery. If `MSSQL_ODBC_CONNECTION_STRING` is set, config for `TARGET_MAILBOX` is loaded from the database; otherwise the job uses local defaults (see `graph_enterprise/config/default_categories.py` and env tuning).
+### Manual inbox trigger (API)
+
+Trigger a single inbox to run immediately, bypassing the scheduler:
+
+```bash
+# Trigger mailbox run for a specific inbox (SQL mode only)
+curl -X POST http://127.0.0.1:8000/api/inboxes/{inbox_id}/run \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Returns the `run_log` entry if successful. Useful for testing configuration changes or urgent re-processing without waiting for the next scheduled interval.
+
+### One-off CLI runs
+
+You can run the pipeline as a one-off without Celery or the scheduler. If `MSSQL_ODBC_CONNECTION_STRING` is set, config for `TARGET_MAILBOX` is loaded from the database; otherwise the job uses local defaults (see `graph_enterprise/config/default_categories.py` and env tuning).
 
 Default behavior fetches **unread** messages for the mailbox’s **local calendar day** (see run policy / time zone). Use `--hours` for a rolling UTC window instead.
 
 ```bash
 # Fetch unread messages for the local day, classify, and write categories back to Outlook
-export TARGET_MAILBOX="afterhours@knightswift.com"
+export TARGET_MAILBOX="afterhours@mytruckingcompany.com"
 python -m graph_enterprise.jobs.mailbox_run --classify --write-back
 
 # Last 24 hours (all messages unless --unread-only), classify only
@@ -135,7 +151,7 @@ python -m graph_enterprise.jobs.mailbox_run --hours 24 --classify
 PowerShell equivalent:
 
 ```powershell
-$env:TARGET_MAILBOX = "afterhours@knightswift.com"
+$env:TARGET_MAILBOX = "afterhours@mytruckingcompany.com"
 python -m graph_enterprise.jobs.mailbox_run --classify --write-back
 ```
 
@@ -150,38 +166,150 @@ python -m graph_enterprise.jobs.mailbox_run --classify --write-back
 | `--mail-folder ID` | Well-known folder (`inbox`, `junkemail`, …), a folder id, or `all`.             |
 | `--classify`       | Calls Vertex AI to categorize messages.                                         |
 | `--write-back`     | Updates the message in Graph with the predicted category (prefixes with `AI-`). |
+---
 
+## Workflow Architecture
 
+The UI provides **two separate workflow builders** for different use cases:
+
+### Classification Workflows (`/workflows/classification`)
+**Purpose**: Automatically categorize emails into predefined categories.
+
+- **Input**: Inbox → Email messages
+- **Processing**: Fetch → Optional subject rules → Gemini classification → Write-back
+- **Output**: Category labels in Outlook (prefixed `AI-`)
+- **Use case**: Email triage, operational categorization, incoming request routing
+
+**Example**: Monitor a support inbox and automatically categorize emails as `Critical`, `Account Issues`, `Billing`, or `Documentation`.
+
+### Agentic Workflows (`/workflows/agentic`)
+**Purpose**: Extract structured data from emails and call external APIs.
+
+- **Input**: Inbox → Email messages
+- **Processing**: Fetch → Gemini function calling for data extraction → Call agent APIs → POST to webhook
+- **Output**: Extracted structured data, API responses, webhook callbacks
+- **Use case**: Order processing, ETA tracking, reference number extraction, downstream integration
+
+**Example**: Monitor an orders inbox, extract order ID/BOL/PRO numbers, call the Order Management and ETA APIs, and POST results to a webhook for downstream systems.
+
+### Key Differences
+
+| Aspect | Classification | Agentic |
+|--------|-----------------|---------|
+| **Goal** | Categorize into predefined categories | Extract structured data & call APIs |
+| **Output** | Category labels | JSON with extracted fields |
+| **Integration** | Write-back to Outlook | Webhooks & external APIs |
+| **Subject Rules** | Supported | N/A |
+
+**For details**, see [WORKFLOW_ARCHITECTURE.md](validation/WORKFLOW_ARCHITECTURE.md).
 ---
 
 ## Core concepts and configuration
 
 Configuration is driven primarily through the web UI, with persistent state in SQL Server.
 
-### Prompts and classification sets
+### Prompt templates
 
-- **Classification sets**: Taxonomies mapped to specific mailboxes. Each category has a **name** (JSON schema and Outlook label) and a **description** (steers the LLM).
-- **Prompt templates**: Jinja-like templates filled with the email’s subject, sender, body, and attachments. Tailor instructions per department or mailbox.
+**Prompt templates** are Jinja-like templates filled with email metadata (subject, sender, body, attachment names) and sent to Gemini for classification. Each template:
+- Can be assigned to one or more classification sets
+- Uses context variables: `{{subject}}`, `{{sender}}`, `{{body}}`, `{{attachments}}`
+- Optionally includes extended thinking budget (configurable per model)
+- Can be tested on mock emails via the UI before deployment
+
+### Classification sets and categories
+
+**Classification sets** are taxonomies (e.g., "Operational", "Support", etc.) assigned to specific mailboxes. Each category has:
+- **Name**: Used as the Outlook label (prefixed with `AI-` on write-back)
+- **Description**: Steers the LLM on what this category represents
+- **JSON Schema**: Auto-generated from category metadata for Gemini structured output
+
+Inboxes reference a single classification set; all messages are categorized into one of that set's categories.
 
 ### Subject rules (hybrid classification)
 
-Configure **subject rules** in the UI to bypass the LLM for predictable traffic.
-
-- Case-insensitive SQL `LIKE` syntax (for example `%Automated%`).
-- Evaluated **before** Vertex AI. On match, the assigned category can be applied immediately (including write-back when enabled), reducing token cost and latency.
+**Subject rules** enable fast, non-LLM categorization of predictable emails:
+- Defined as case-insensitive SQL `LIKE` patterns (e.g., `%Automated%`, `%On-Time%`)
+- Evaluated **before** Vertex AI; on match, category is assigned immediately
+- Reduces token spend and latency for rule-matching traffic
+- Applied during fetch filtering (subject only) or post-fetch classification
 
 ### Inbox mappings and fetch filters
 
-When you add or edit an inbox in the UI, you can set:
+When you add or edit an inbox in the UI, configure:
 
-- **Polling interval**: How often the scheduler considers the inbox for a run.
-- **Fetch filters**: Narrow the Graph query with sender allow/deny lists, body keywords (`$search`), importance, attachments, existing categories, and related options.
-- **Write-back**: Whether to PATCH categories on messages in Exchange.
+- **Polling interval** (1–1440 minutes): How often the scheduler checks for due inboxes
+- **Time window mode**:
+  - `local_today`: Enqueue unread messages for the mailbox's local calendar day (midnight-to-midnight in the inbox's configured time zone)
+  - `rolling_hours`: Fetch the last N hours (UTC); useful with `--unread-only` for rolling windows
+  - `since_last_run`: Incremental fetch since the last execution (scheduled runs only)
+- **Mail folder**: Well-known folder (`inbox`, `junkemail`, `drafts`, …), a folder ID, or `all`
+- **Fetch filters**: Narrow the Graph query with:
+  - Sender allow/deny lists (exact match or domain wildcards)
+  - Subject/body keywords (`$search` parameters)
+  - Importance levels (high, normal, low)
+  - Attachment filters (any, none, specific types)
+  - Existing categories (include/exclude)
+  - Unread-only constraint
+  - Max message count per run (1–500)
+- **Write-back**: Whether to PATCH predicted categories on messages (prefixed `AI-`)
+- **Worker count** (1–4): Concurrent PATCH calls during write-back
+- **Model override**: Assign a different Gemini model to this inbox (overrides `GEMINI_MODEL` env)
+
+### Agent API configuration
+
+**Agent workflows** enable reference number extraction and downstream integration:
+- Extract structured data (order numbers, BOLs, PRO numbers, truck/trailer IDs) from email bodies using Gemini function calling
+- Configure external webhook URLs to POST classification results + extracted metadata
+- Useful for downstream systems (order processing, ETA tracking, dispatch)
+- Metadata is stored in `message_classification` alongside category assignments
+
+### AI models
+
+Pre-configured models available for assignment:
+- `gemini-2.5-flash-lite`: Fast, cost-effective; supports extended thinking via HIGH budget
+- `gemini-3.1-pro`: Most capable; high token cost; recommended for complex taxonomies
+- `gemini-3.1-flash-lite`: Balanced cost/capability ratio
+
+Each inbox can override the default model. Fine-tuning and RAG are not currently supported.
 
 ### Demo mode vs. SQL Server
 
-- **Demo mode**: No `MSSQL_ODBC_CONNECTION_STRING` (or forced via `GRAPH_ENTERPRISE_DEMO`) — in-memory sample data; changes are lost when the API process exits.
-- **SQL Server**: Full CRUD, run logs, fleet scheduling, and DB-backed `mailbox_run` configuration.
+- **Demo mode**: No `MSSQL_ODBC_CONNECTION_STRING` (or forced via `GRAPH_ENTERPRISE_DEMO=1`) — in-memory sample data; ideal for local development and testing. Changes are lost when the API process exits.
+- **SQL Server mode**: Full CRUD, persistent run logs, fleet scheduling, and DB-backed `mailbox_run` configuration. Required for production use of Celery scheduler.
+
+---
+
+## Configuration limits and defaults
+
+### Default models
+
+| Model                   | Tier        | Best for                                         |
+| ----------------------- | ----------- | ------------------------------------------------- |
+| `gemini-2.5-flash-lite` | Cost        | High-volume emails, simple taxonomies            |
+| `gemini-3.1-flash-lite` | Balanced    | Reliable mid-range classification                |
+| `gemini-3.1-pro`        | Capable     | Complex taxonomies, multi-faceted classification |
+
+### Default categories (Logistics/Trucking orientation)
+
+Seeded on first run if `default_categories.py` is applied:
+- `Critical` – Urgent issues, escalations
+- `EquipmentBreakdownRoadside` – Vehicle/equipment failures
+- `ETAOrTracking` – Status updates and location tracking
+- `AppointmentScheduling` – Meetings, confirmations
+- `DocumentsOrForms` – Administrative paperwork
+- (and others per deployment policy)
+
+### Configuration limits and ranges
+
+| Setting                      | Min | Max  | Notes                                                          |
+| ---------------------------- | --- | ---- | -------------------------------------------------------------- |
+| Polling interval (minutes)   | 1   | 1440 | 24 hours maximum; 1 minute minimum for high-frequency inboxes |
+| Message batch per run        | 1   | 500  | Limits Graph query latency and token spend per execution       |
+| Concurrent PATCH workers     | 1   | 4    | Parallel write-back calls; max 4 enforced by Microsoft Graph API rate limits  |
+| Email body character limit   | —   | 65K  | First 1000 words of latest reply; truncated for Gemini input   |
+| Token spend tracking         | —   | ∞    | Persisted per `message_classification` row; queryable via API  |
+| Subject rule patterns (LIKE) | —   | ∞    | SQL `LIKE` syntax; `%` wildcards, case-insensitive matching    |
+| Inbox time zone             | —   | IANA | Any IANA timezone (e.g., `America/Chicago`); affects `local_today` window |
 
 ---
 
@@ -192,9 +320,10 @@ When you add or edit an inbox in the UI, you can set:
 | ------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Authentication      | `graph_enterprise/auth/`                                | MSAL app-only tokens for Microsoft Graph.                                                                                                                                                    |
 | Microsoft Graph     | `graph_enterprise/microsoft_graph/`                     | Paginated `/messages` with `$filter` / `$search`; concurrent PATCH write-back.                                                                                                               |
-| Classification      | `graph_enterprise/classification/`                      | `schema_from_config.py` (dynamic JSON Schema), `prompt.py` (templates and normalization), `gemini_category_batch.py` (Vertex calls, retry/backoff), `subject_rules.py` (LIKE / hybrid path). |
+| Classification      | `graph_enterprise/classification/`                      | `schema_from_config.py` (dynamic JSON Schema), `prompt.py` (templates and normalization), `gemini_category_batch.py` (Vertex calls, retry/backoff), `subject_rules.py` (LIKE / hybrid path), `eta_extractor.py` (reference number extraction). |
 | Jobs and scheduling | `graph_enterprise/jobs/`                                | `celery_app.py`, `tasks.py`, `scheduler_loop.py`, `run_lock.py` (Redis), `mailbox_run.py` (CLI orchestration).                                                                               |
-| API and UI          | `graph_enterprise/api/`, `graph_enterprise/ui/`, `web/` | FastAPI backend and Next.js frontend for fleet config, taxonomies, and metrics.                                                                                                              |
+| Agent workflows     | `graph_enterprise/classification/eta_extractor.py`      | Gemini function calling for reference number extraction; webhook integration for external API callbacks.                                                                                     |
+| API and UI          | `graph_enterprise/api/`, `graph_enterprise/ui/`, `web/` | FastAPI backend (39 endpoints) and Next.js frontend (8 pages) for prompts, classifications, inboxes, models, agent APIs, run logs, and statistics.                                           |
 
 
 ### End-to-end flow

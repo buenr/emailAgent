@@ -5,3 +5,10 @@ __pycache__/
 classifier_config.db
 .tsbuildinfo
 .next/
+.env*
+*.log
+.DS_Store
+dist/
+build/
+*.bak
+*.tmp

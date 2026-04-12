@@ -55,10 +55,6 @@ def _row_to_config(inbox: dict) -> MailboxPipelineConfig:
         last_run_at=last_run,
         subject_classify_enabled=bool(inbox.get("subject_classify_enabled", False)),
         subject_classify_rules=parse_subject_classify_rules(rules_raw),
-        eta_lookup_enabled=bool(inbox.get("eta_lookup_enabled", False)),
-        eta_lookup_api_url=inbox.get("eta_lookup_api_url"),
-        eta_lookup_api_key=inbox.get("eta_lookup_api_key"),
-        eta_draft_enabled=bool(inbox.get("eta_draft_enabled", True)),
     )
 
 

@@ -43,7 +43,7 @@ def build_draft_body_html(
 
     Args:
         ref_numbers: ExtractedReferenceNumbers with the numbers found in the email.
-        lookup_result: ETALookupResult from the external API.
+        lookup_result: Result object from the external agent API.
 
     Returns:
         HTML string for the email body.
@@ -53,7 +53,7 @@ def build_draft_body_html(
     parts = [
         "<div style='font-family:Arial,sans-serif;font-size:14px;'>",
         "<hr style='border:1px solid #ccc;'>",
-        "<p><b>Automated ETA Lookup</b></p>",
+        "<p><b>Automated agent workflow result</b></p>",
     ]
     if ref_block:
         parts.append(f"<p><b>Reference Numbers:</b></p>{ref_block}")

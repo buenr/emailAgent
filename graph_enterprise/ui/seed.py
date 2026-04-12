@@ -5,11 +5,11 @@ from __future__ import annotations
 from ..config.default_categories import DEFAULT_CATEGORIES
 from . import db
 
-DEFAULT_TEMPLATE_NAME = "Knight-Swift Default Prompt"
-DEFAULT_SET_NAME = "Knight-Swift Default Classification Set"
-DEFAULT_INBOX = "afterhours@knightswift.com"
+DEFAULT_TEMPLATE_NAME = "Logistics/Trucking Default Prompt"
+DEFAULT_SET_NAME = "Logistics/Trucking Default Classification Set"
+DEFAULT_INBOX = "afterhours@mytruckingcompany.com"
 
-DEFAULT_PROMPT_TEMPLATE = """You triage email for the Knight-Swift Transportation after-hours operations desk.
+DEFAULT_PROMPT_TEMPLATE = """You triage email for the Logistics/Trucking after-hours operations desk.
 The mailbox is {{ mailbox_id }}. After-hours staff cover overnight and weekend freight operations:
 drivers in the field, equipment issues, load execution, and urgent customer or broker issues.
 

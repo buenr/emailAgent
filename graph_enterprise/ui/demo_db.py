@@ -31,15 +31,15 @@ _state: Dict[str, Any] = {
     "message_classifications": [],
     "models": [],
     "next_id": {"prompt": 1, "set": 1, "cat": 1, "inbox": 1, "runlog": 1, "msgcls": 1, "model": 1},
-    "settings": {"global_polling_paused": "false"},
+    "settings": {"global_polling_paused": "false", "agent_api_configs": "[]"},
     "initialized": False,
 }
 
-DEFAULT_TEMPLATE_NAME = "Knight-Swift Default Prompt"
-DEFAULT_SET_NAME = "Knight-Swift Default Classification Set"
+DEFAULT_TEMPLATE_NAME = "Logistics/Trucking Default Prompt"
+DEFAULT_SET_NAME = "Logistics/Trucking Default Classification Set"
 DEFAULT_INBOX_MAILBOX = "demo-afterhours@example.com"
 
-DEFAULT_PROMPT_TEMPLATE = """You triage email for the Knight-Swift Transportation after-hours operations desk.
+DEFAULT_PROMPT_TEMPLATE = """You triage email for the Logistics/Trucking after-hours operations desk.
 The mailbox is {{ mailbox_id }}. After-hours staff cover overnight and weekend freight operations:
 drivers in the field, equipment issues, load execution, and urgent customer or broker issues.
 
@@ -187,10 +187,6 @@ def init_demo_store() -> None:
                 "fetch_filter_json": None,
                 "subject_classify_enabled": False,
                 "subject_classify_rules_json": None,
-                "eta_lookup_enabled": False,
-                "eta_lookup_api_url": None,
-                "eta_lookup_api_key": None,
-                "eta_draft_enabled": True,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -344,8 +340,6 @@ def _demo_list_row_shape(r: Dict[str, Any]) -> None:
     else:
         r["fetch_filter"] = parse_inbox_fetch_filter(raw).model_dump(mode="json")
     r["subject_classify_enabled"] = bool(r.get("subject_classify_enabled", False))
-    r["eta_lookup_enabled"] = bool(r.get("eta_lookup_enabled", False))
-    r["eta_draft_enabled"] = bool(r.get("eta_draft_enabled", True))
     raw_sj = r.pop("subject_classify_rules_json", None)
     rules = parse_subject_classify_rules(raw_sj)
     r["subject_classify_rules"] = [x.model_dump(mode="json") for x in rules]
@@ -426,10 +420,6 @@ def create_inbox(
     fetch_filter_json: Optional[str] = None,
     subject_classify_enabled: bool = False,
     subject_classify_rules_json: Optional[str] = None,
-    eta_lookup_enabled: bool = False,
-    eta_lookup_api_url: Optional[str] = None,
-    eta_lookup_api_key: Optional[str] = None,
-    eta_draft_enabled: bool = True,
 ) -> int:
     with _lock:
         if any(str(i["mailbox_id"]).lower() == mailbox_id.lower() for i in _state["inboxes"]):
@@ -469,10 +459,6 @@ def create_inbox(
                 "fetch_filter_json": fetch_filter_json,
                 "subject_classify_enabled": subject_classify_enabled,
                 "subject_classify_rules_json": subject_classify_rules_json,
-                "eta_lookup_enabled": eta_lookup_enabled,
-                "eta_lookup_api_url": eta_lookup_api_url,
-                "eta_lookup_api_key": eta_lookup_api_key,
-                "eta_draft_enabled": eta_draft_enabled,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -497,10 +483,6 @@ def update_inbox(
     fetch_filter_json: Optional[str] = None,
     subject_classify_enabled: bool = False,
     subject_classify_rules_json: Optional[str] = None,
-    eta_lookup_enabled: bool = False,
-    eta_lookup_api_url: Optional[str] = None,
-    eta_lookup_api_key: Optional[str] = None,
-    eta_draft_enabled: bool = True,
 ) -> None:
     with _lock:
         for i in _state["inboxes"]:
@@ -537,10 +519,6 @@ def update_inbox(
                         "fetch_filter_json": fetch_filter_json,
                         "subject_classify_enabled": subject_classify_enabled,
                         "subject_classify_rules_json": subject_classify_rules_json,
-                        "eta_lookup_enabled": eta_lookup_enabled,
-                        "eta_lookup_api_url": eta_lookup_api_url,
-                        "eta_lookup_api_key": eta_lookup_api_key,
-                        "eta_draft_enabled": eta_draft_enabled,
                         "updated_at": _now_iso(),
                     }
                 )
@@ -595,8 +573,6 @@ def get_inbox_by_id(inbox_id: int) -> Optional[Dict[str, Any]]:
     else:
         d["fetch_filter"] = parse_inbox_fetch_filter(raw).model_dump(mode="json")
     d["subject_classify_enabled"] = bool(d.get("subject_classify_enabled", False))
-    d["eta_lookup_enabled"] = bool(d.get("eta_lookup_enabled", False))
-    d["eta_draft_enabled"] = bool(d.get("eta_draft_enabled", True))
     raw_sj = d.pop("subject_classify_rules_json", None)
     d["subject_classify_rules"] = [
         x.model_dump(mode="json") for x in parse_subject_classify_rules(raw_sj)
@@ -612,10 +588,6 @@ def _inbox_detail_dict(inv: Dict[str, Any]) -> Dict[str, Any]:
     data["graph_write_back_enabled"] = bool(data.get("graph_write_back_enabled", True))
     data.setdefault("subject_classify_enabled", False)
     data.setdefault("subject_classify_rules_json", inv.get("subject_classify_rules_json"))
-    data.setdefault("eta_lookup_enabled", inv.get("eta_lookup_enabled", False))
-    data.setdefault("eta_lookup_api_url", inv.get("eta_lookup_api_url"))
-    data.setdefault("eta_lookup_api_key", inv.get("eta_lookup_api_key"))
-    data.setdefault("eta_draft_enabled", inv.get("eta_draft_enabled", True))
     data["prompt_template"] = pt["body"] if pt else ""
     data["categories"] = list_categories(sid)
     return data
@@ -640,10 +612,6 @@ def inbox_summary() -> List[Dict[str, Any]]:
                     "patch_max_workers": row["patch_max_workers"],
                     "polling_interval_minutes": row["polling_interval_minutes"],
                     "is_active": bool(row.get("is_active")),
-                    "eta_lookup_enabled": bool(row.get("eta_lookup_enabled", False)),
-                    "eta_lookup_api_url": row.get("eta_lookup_api_url"),
-                    "eta_lookup_api_key": row.get("eta_lookup_api_key"),
-                    "eta_draft_enabled": bool(row.get("eta_draft_enabled", True)),
                     "last_run_at": row.get("last_run_at"),
                     "next_run_at": row.get("next_run_at"),
                     "category_count": len(cats),
@@ -692,6 +660,31 @@ def get_global_polling_paused() -> bool:
 def set_global_polling_paused(paused: bool) -> None:
     with _lock:
         _state["settings"]["global_polling_paused"] = "true" if paused else "false"
+
+
+def get_agent_api_configs() -> List[Dict[str, str]]:
+    with _lock:
+        raw = str(_state["settings"].get("agent_api_configs", "[]"))
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                return [
+                    {
+                        "name": str(item.get("name", "")),
+                        "api_url": str(item.get("api_url", "")),
+                        "api_key": str(item.get("api_key", "")),
+                    }
+                    for item in data
+                    if isinstance(item, dict)
+                ]
+        except Exception:
+            pass
+        return []
+
+
+def set_agent_api_configs(configs: List[Dict[str, str]]) -> None:
+    with _lock:
+        _state["settings"]["agent_api_configs"] = json.dumps(configs)
 
 
 def _parse_utc(ts: Optional[Any]) -> Optional[datetime]:

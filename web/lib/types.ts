@@ -114,6 +114,12 @@ export type AppModel = {
 /** Subset used in dropdowns (e.g. inbox model selector). */
 export type AppModelRow = { id: number; name: string };
 
+export type AgentApiConfig = {
+  name: string;
+  api_url: string;
+  api_key: string;
+};
+
 /* ------------------------------------------------------------------ */
 /*  Inbox types                                                        */
 /* ------------------------------------------------------------------ */
@@ -158,10 +164,6 @@ export type Inbox = {
   prompt_name?: string;
   classification_set_name?: string;
   fetch_filter?: FetchFilter | null;
-  eta_lookup_enabled?: boolean;
-  eta_lookup_api_url?: string;
-  eta_lookup_api_key?: string;
-  eta_draft_enabled?: boolean;
 };
 
 /* ------------------------------------------------------------------ */

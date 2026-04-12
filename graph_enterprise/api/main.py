@@ -88,6 +88,12 @@ class TaxonomyUpdate(BaseModel):
     categories: List[TaxonomyRow]
 
 
+class AgentApiConfig(BaseModel):
+    name: str = Field(..., min_length=1)
+    api_url: str = Field(..., min_length=1)
+    api_key: str = Field(..., min_length=1)
+
+
 _MSG_AT_LEAST_ONE_CATEGORY = "At least one category is required."
 
 
@@ -126,17 +132,13 @@ class InboxCreate(BaseModel):
     timezone: str = "UTC"
     mail_folder: str = "inbox"
     max_messages_per_run: Optional[int] = 500
-    patch_max_workers: int = Field(default=4, ge=1, le=10)
+    patch_max_workers: int = Field(default=4, ge=1, le=4)
     polling_interval_minutes: int = Field(default=5, ge=1, le=1440)
     is_active: bool = True
     graph_write_back_enabled: bool = True
     fetch_filter: Optional[InboxFetchFilter] = None
     subject_classify_enabled: bool = False
     subject_classify_rules: List[SubjectClassifyRule] = Field(default_factory=list)
-    eta_lookup_enabled: bool = False
-    eta_lookup_api_url: Optional[str] = None
-    eta_lookup_api_key: Optional[str] = None
-    eta_draft_enabled: bool = True
 
 
 class InboxUpdate(BaseModel):
@@ -147,17 +149,13 @@ class InboxUpdate(BaseModel):
     timezone: str = "UTC"
     mail_folder: str = "inbox"
     max_messages_per_run: Optional[int] = 500
-    patch_max_workers: int = Field(default=4, ge=1, le=10)
+    patch_max_workers: int = Field(default=4, ge=1, le=4)
     polling_interval_minutes: int = Field(default=5, ge=1, le=1440)
     is_active: bool = True
     graph_write_back_enabled: bool = True
     fetch_filter: InboxFetchFilter = Field(default_factory=InboxFetchFilter)
     subject_classify_enabled: bool = False
     subject_classify_rules: List[SubjectClassifyRule] = Field(default_factory=list)
-    eta_lookup_enabled: bool = False
-    eta_lookup_api_url: Optional[str] = None
-    eta_lookup_api_key: Optional[str] = None
-    eta_draft_enabled: bool = True
 
 
 class BulkActivateRequest(BaseModel):
@@ -453,10 +451,6 @@ def create_inbox(payload: InboxCreate) -> dict[str, int]:
                 fetch_filter_json=ff_json,
                 subject_classify_enabled=payload.subject_classify_enabled,
                 subject_classify_rules_json=_subject_rules_json(payload.subject_classify_rules),
-                eta_lookup_enabled=payload.eta_lookup_enabled,
-                eta_lookup_api_url=payload.eta_lookup_api_url,
-                eta_lookup_api_key=payload.eta_lookup_api_key,
-                eta_draft_enabled=payload.eta_draft_enabled,
             )
         return {"id": new_id}
     except Exception as e:
@@ -494,10 +488,6 @@ def update_inbox(inbox_id: int, payload: InboxUpdate) -> dict[str, str]:
                 fetch_filter_json=ff_json,
                 subject_classify_enabled=payload.subject_classify_enabled,
                 subject_classify_rules_json=_subject_rules_json(payload.subject_classify_rules),
-                eta_lookup_enabled=payload.eta_lookup_enabled,
-                eta_lookup_api_url=payload.eta_lookup_api_url,
-                eta_lookup_api_key=payload.eta_lookup_api_key,
-                eta_draft_enabled=payload.eta_draft_enabled,
             )
         return {"status": "ok"}
     except Exception as e:
@@ -579,6 +569,21 @@ def put_global_polling(payload: GlobalPollingUpdate) -> dict[str, str]:
         db.set_global_polling_paused(conn, payload.paused)
     return {"status": "ok"}
 
+@protected.get("/agent-apis")
+def list_agent_apis() -> List[dict[str, str]]:
+    with db.get_connection() as conn:
+        return db.get_agent_api_configs(conn)
+
+
+@protected.put("/agent-apis")
+def put_agent_apis(payload: List[AgentApiConfig]) -> dict[str, str]:
+    configs = [
+        {"name": c.name.strip(), "api_url": c.api_url.strip(), "api_key": c.api_key}
+        for c in payload
+    ]
+    with db.get_connection() as conn:
+        db.set_agent_api_configs(conn, configs)
+    return {"status": "ok"}
 
 # --- App Models ---
 
@@ -837,10 +842,6 @@ def import_data(payload: ImportPayload) -> dict[str, Any]:
                         fetch_filter_json=ff_json,
                         subject_classify_enabled=bool(inv.get("subject_classify_enabled", False)),
                         subject_classify_rules_json=sc_rules_json,
-                        eta_lookup_enabled=bool(inv.get("eta_lookup_enabled", False)),
-                        eta_lookup_api_url=inv.get("eta_lookup_api_url"),
-                        eta_lookup_api_key=inv.get("eta_lookup_api_key"),
-                        eta_draft_enabled=bool(inv.get("eta_draft_enabled", True)),
                     )
                 else:
                     db.create_inbox(
@@ -859,10 +860,6 @@ def import_data(payload: ImportPayload) -> dict[str, Any]:
                         fetch_filter_json=ff_json,
                         subject_classify_enabled=bool(inv.get("subject_classify_enabled", False)),
                         subject_classify_rules_json=sc_rules_json,
-                        eta_lookup_enabled=bool(inv.get("eta_lookup_enabled", False)),
-                        eta_lookup_api_url=inv.get("eta_lookup_api_url"),
-                        eta_lookup_api_key=inv.get("eta_lookup_api_key"),
-                        eta_draft_enabled=bool(inv.get("eta_draft_enabled", True)),
                     )
                 imported["inboxes"] += 1
             except Exception:
