@@ -201,7 +201,7 @@ The UI provides **two separate workflow builders** for different use cases:
 | **Integration** | Write-back to Outlook | Webhooks & external APIs |
 | **Subject Rules** | Supported | N/A |
 
-**For details**, see [WORKFLOW_ARCHITECTURE.md](validation/WORKFLOW_ARCHITECTURE.md).
+**For details**, see [WORKFLOW_ARCHITECTURE.md](validation/WORKFLOW_ARCHITECTURE.md). For a visual overview of the system, see the [Architecture Diagram](ARCHITECTURE.md).
 ---
 
 ## Core concepts and configuration
