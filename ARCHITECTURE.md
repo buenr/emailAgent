@@ -9,12 +9,12 @@ graph TD
     subgraph Backend ["FastAPI Backend (run_api.py)"]
         API[REST Endpoints]
         Auth[MSAL Authentication]
-        DBA[Database Abstraction (pyodbc)]
+        DBA["Database Abstraction (pyodbc)"]
     end
 
     subgraph Persistence ["Infrastructure"]
-        SQL[(SQL Server: Config & Logs)]
-        Redis[(Redis: Task Queue & Locks)]
+        SQL["SQL Server: Config & Logs"]
+        Redis["Redis: Task Queue & Locks"]
     end
 
     subgraph Execution ["Orchestration & Jobs"]
