@@ -5,6 +5,8 @@ const BASE =
   "http://127.0.0.1:8000";
 
 export const AUTH_STORAGE_KEY = "graph_enterprise_admin_token";
+export const AUTH_COOKIE_KEY = "admin_token";
+export const AUTH_COOKIE_MAX_AGE_SEC = 60 * 60 * 24;
 
 /** Custom error that preserves the HTTP status code from the API response. */
 export class ApiError extends Error {
@@ -27,6 +29,24 @@ export function setAdminToken(token: string) {
 
 export function clearAdminToken() {
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  clearAdminCookie();
+}
+
+function secureCookieFlag(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.protocol === "https:" ? "; Secure" : "";
+}
+
+export function setAdminCookie(token: string) {
+  if (typeof document === "undefined") return;
+  document.cookie =
+    `${AUTH_COOKIE_KEY}=${token}; path=/; SameSite=Strict; Max-Age=${AUTH_COOKIE_MAX_AGE_SEC}` +
+    secureCookieFlag();
+}
+
+export function clearAdminCookie() {
+  if (typeof document === "undefined") return;
+  document.cookie = `${AUTH_COOKIE_KEY}=; path=/; SameSite=Strict; Max-Age=0` + secureCookieFlag();
 }
 
 function authHeaders(): Record<string, string> {

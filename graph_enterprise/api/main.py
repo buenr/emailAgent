@@ -632,7 +632,7 @@ def get_inbox_run_logs(
 def trigger_inbox_run(inbox_id: int) -> dict[str, Any]:
     """Trigger a mailbox classification run for the given inbox."""
     from ..jobs.mailbox_run import run_scheduled_mailbox_pipeline
-    from ..jobs.run_lock import try_acquire_run_lock, is_run_lock_held
+    from ..jobs.run_lock import is_run_lock_held, release_run_lock, try_acquire_run_lock
 
     with db.get_connection() as conn:
         inbox = db.get_inbox_by_id(conn, inbox_id)
@@ -641,9 +641,22 @@ def trigger_inbox_run(inbox_id: int) -> dict[str, Any]:
     if not inbox.get("is_active"):
         raise HTTPException(status_code=400, detail="Inbox is not active")
 
-    # Check for an existing run lock (conflict detection)
-    if not db.is_demo_mode() and is_run_lock_held(inbox_id):
-        raise HTTPException(status_code=409, detail="A run is already in progress for this inbox")
+    lock_acquired = False
+    if not db.is_demo_mode():
+        # Fast-path conflict check.
+        if is_run_lock_held(inbox_id):
+            raise HTTPException(status_code=409, detail="A run is already in progress for this inbox")
+        # Atomic lock attempt to prevent race between concurrent trigger requests.
+        lock_acquired = bool(try_acquire_run_lock(inbox_id))
+        if not lock_acquired:
+            if is_run_lock_held(inbox_id):
+                raise HTTPException(
+                    status_code=409, detail="A run is already in progress for this inbox"
+                )
+            raise HTTPException(
+                status_code=503,
+                detail="Run lock infrastructure unavailable. Configure Redis run locking and retry.",
+            )
 
     try:
         metrics = run_scheduled_mailbox_pipeline(inbox_id)
@@ -666,6 +679,9 @@ def trigger_inbox_run(inbox_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=msg) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        if lock_acquired:
+            release_run_lock(inbox_id)
 
     result: dict[str, Any] = {"status": metrics.status.lower()}
     if metrics.status == "Success":
@@ -741,129 +757,355 @@ class ImportPayload(BaseModel):
 
 @protected.post("/import")
 def import_data(payload: ImportPayload) -> dict[str, Any]:
-    """Upsert configuration data from JSON. For each entity, check if ID exists → update, else create."""
+    """Upsert configuration data from JSON using one transaction (fail-fast on first invalid row)."""
+
+    def _item_error(collection: str, index: int, message: str) -> HTTPException:
+        return HTTPException(status_code=400, detail=f"{collection}[{index}]: {message}")
+
+    def _as_int_required(
+        value: Any,
+        *,
+        collection: str,
+        index: int,
+        field: str,
+        minimum: int = 1,
+    ) -> int:
+        try:
+            parsed = int(value)
+        except Exception as exc:
+            raise _item_error(collection, index, f"{field} must be an integer.") from exc
+        if parsed < minimum:
+            raise _item_error(collection, index, f"{field} must be >= {minimum}.")
+        return parsed
+
+    def _as_int_optional(
+        value: Any,
+        *,
+        collection: str,
+        index: int,
+        field: str,
+        minimum: int = 1,
+    ) -> Optional[int]:
+        if value is None or value == "":
+            return None
+        return _as_int_required(
+            value, collection=collection, index=index, field=field, minimum=minimum
+        )
+
+    def _as_str_required(value: Any, *, collection: str, index: int, field: str) -> str:
+        s = str(value or "").strip()
+        if not s:
+            raise _item_error(collection, index, f"{field} is required.")
+        return s
+
+    def _as_str_default(value: Any, *, default: str) -> str:
+        s = str(value if value is not None else "").strip()
+        return s or default
+
+    def _as_bool(value: Any, *, collection: str, index: int, field: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            if value in (0, 1):
+                return bool(value)
+            raise _item_error(collection, index, f"{field} must be a boolean.")
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in ("1", "true", "yes", "on"):
+                return True
+            if v in ("0", "false", "no", "off"):
+                return False
+        raise _item_error(collection, index, f"{field} must be a boolean.")
+
     imported = {"prompt_templates": 0, "classification_sets": 0, "inboxes": 0, "app_models": 0}
     with db.get_connection() as conn:
+        prompt_id_map: dict[int, int] = {}
+        set_id_map: dict[int, int] = {}
+        model_id_map: dict[int, int] = {}
+        existing_prompt_ids = {int(x["id"]) for x in db.list_prompt_templates(conn)}
+        existing_set_ids = {int(x["id"]) for x in db.list_classification_sets(conn)}
+        existing_model_ids = {int(x["id"]) for x in db.list_app_models(conn)}
+        existing_inbox_ids = {int(x["id"]) for x in db.list_inboxes(conn)}
+
         # --- Prompt templates ---
-        for pt in payload.prompt_templates:
-            pt_id = pt.get("id")
-            existing = None
-            if pt_id is not None:
-                for existing_pt in db.list_prompt_templates(conn):
-                    if int(existing_pt["id"]) == int(pt_id):
-                        existing = existing_pt
-                        break
-            try:
-                if existing:
-                    db.update_prompt_template(conn, int(pt_id), str(pt.get("name", "")), str(pt.get("body", "")))
-                else:
-                    db.create_prompt_template(conn, str(pt.get("name", "")), str(pt.get("body", "")))
-                imported["prompt_templates"] += 1
-            except Exception:
-                pass
+        for idx, pt in enumerate(payload.prompt_templates):
+            if not isinstance(pt, dict):
+                raise _item_error("prompt_templates", idx, "item must be an object.")
+            source_id = _as_int_optional(
+                pt.get("id"),
+                collection="prompt_templates",
+                index=idx,
+                field="id",
+            )
+            name = _as_str_required(
+                pt.get("name"),
+                collection="prompt_templates",
+                index=idx,
+                field="name",
+            )
+            body = str(pt.get("body") if pt.get("body") is not None else "")
+            if source_id is not None and source_id in existing_prompt_ids:
+                db.update_prompt_template(conn, source_id, name, body)
+                actual_id = source_id
+            else:
+                actual_id = db.create_prompt_template(conn, name, body)
+                existing_prompt_ids.add(int(actual_id))
+            if source_id is not None:
+                prompt_id_map[source_id] = int(actual_id)
+            imported["prompt_templates"] += 1
 
         # --- Classification sets (with categories) ---
-        for cs in payload.classification_sets:
-            cs_id = cs.get("id")
-            existing = None
-            if cs_id is not None:
-                for existing_cs in db.list_classification_sets(conn):
-                    if int(existing_cs["id"]) == int(cs_id):
-                        existing = existing_cs
-                        break
-            try:
-                if existing:
-                    db.update_classification_set(conn, int(cs_id), str(cs.get("name", "")))
-                else:
-                    cs_id = db.create_classification_set(conn, str(cs.get("name", "")))
-                # Upsert categories
-                cats = cs.get("categories", [])
-                if cats:
-                    clean_cats = [{"name": c.get("name", ""), "description": c.get("description", "")} for c in cats if c.get("name")]
-                    if clean_cats:
-                        db.replace_categories(conn, int(cs_id), clean_cats)
-                imported["classification_sets"] += 1
-            except Exception:
-                pass
+        for idx, cs in enumerate(payload.classification_sets):
+            if not isinstance(cs, dict):
+                raise _item_error("classification_sets", idx, "item must be an object.")
+            source_id = _as_int_optional(
+                cs.get("id"),
+                collection="classification_sets",
+                index=idx,
+                field="id",
+            )
+            name = _as_str_required(
+                cs.get("name"),
+                collection="classification_sets",
+                index=idx,
+                field="name",
+            )
+            if source_id is not None and source_id in existing_set_ids:
+                db.update_classification_set(conn, source_id, name)
+                actual_id = source_id
+            else:
+                actual_id = db.create_classification_set(conn, name)
+                existing_set_ids.add(int(actual_id))
+
+            cats_raw = cs.get("categories", [])
+            if cats_raw is None:
+                cats_raw = []
+            if not isinstance(cats_raw, list):
+                raise _item_error("classification_sets", idx, "categories must be a list.")
+            clean_cats: list[dict[str, str]] = []
+            for cat_idx, cat in enumerate(cats_raw):
+                if not isinstance(cat, dict):
+                    raise _item_error(
+                        "classification_sets", idx, f"categories[{cat_idx}] must be an object."
+                    )
+                cat_name = str(cat.get("name", "")).strip()
+                if not cat_name:
+                    raise _item_error(
+                        "classification_sets",
+                        idx,
+                        f"categories[{cat_idx}].name is required.",
+                    )
+                clean_cats.append(
+                    {
+                        "name": cat_name,
+                        "description": str(cat.get("description", "")).strip(),
+                    }
+                )
+            if clean_cats:
+                db.replace_categories(conn, int(actual_id), clean_cats)
+
+            if source_id is not None:
+                set_id_map[source_id] = int(actual_id)
+            imported["classification_sets"] += 1
 
         # --- App models ---
-        for am in payload.app_models:
-            am_id = am.get("id")
-            existing = None
-            if am_id is not None:
-                for existing_am in db.list_app_models(conn):
-                    if int(existing_am["id"]) == int(am_id):
-                        existing = existing_am
-                        break
-            try:
-                if existing:
-                    # App model has no update function, skip if exists
-                    pass
-                else:
-                    db.create_app_model(conn, str(am.get("name", "")))
-                imported["app_models"] += 1
-            except Exception:
-                pass
+        for idx, am in enumerate(payload.app_models):
+            if not isinstance(am, dict):
+                raise _item_error("app_models", idx, "item must be an object.")
+            source_id = _as_int_optional(
+                am.get("id"),
+                collection="app_models",
+                index=idx,
+                field="id",
+            )
+            name = _as_str_required(
+                am.get("name"),
+                collection="app_models",
+                index=idx,
+                field="name",
+            )
+            if source_id is not None and source_id in existing_model_ids:
+                actual_id = source_id
+            else:
+                actual_id = db.create_app_model(conn, name)
+                existing_model_ids.add(int(actual_id))
+            if source_id is not None:
+                model_id_map[source_id] = int(actual_id)
+            imported["app_models"] += 1
 
         # --- Inboxes ---
-        for inv in payload.inboxes:
-            inv_id = inv.get("id")
-            existing = None
-            if inv_id is not None:
-                row = db.get_inbox_by_id(conn, int(inv_id))
-                if row:
-                    existing = row
-            try:
-                ff_json = None
-                ff = inv.get("fetch_filter")
-                if ff is not None:
-                    if isinstance(ff, str):
-                        ff_json = ff
-                    elif isinstance(ff, dict):
-                        ff_json = json.dumps(ff)
-                sc_rules = inv.get("subject_classify_rules", [])
-                sc_rules_json = json.dumps(sc_rules) if sc_rules else None
+        for idx, inv in enumerate(payload.inboxes):
+            if not isinstance(inv, dict):
+                raise _item_error("inboxes", idx, "item must be an object.")
+            source_id = _as_int_optional(
+                inv.get("id"),
+                collection="inboxes",
+                index=idx,
+                field="id",
+            )
+            mailbox_id = _as_str_required(
+                inv.get("mailbox_id"),
+                collection="inboxes",
+                index=idx,
+                field="mailbox_id",
+            )
+            prompt_template_id = _as_int_required(
+                inv.get("prompt_template_id"),
+                collection="inboxes",
+                index=idx,
+                field="prompt_template_id",
+            )
+            prompt_template_id = prompt_id_map.get(prompt_template_id, prompt_template_id)
+            if prompt_template_id not in existing_prompt_ids:
+                raise _item_error(
+                    "inboxes",
+                    idx,
+                    f"prompt_template_id {prompt_template_id} does not exist in destination.",
+                )
+            classification_set_id = _as_int_required(
+                inv.get("classification_set_id"),
+                collection="inboxes",
+                index=idx,
+                field="classification_set_id",
+            )
+            classification_set_id = set_id_map.get(classification_set_id, classification_set_id)
+            if classification_set_id not in existing_set_ids:
+                raise _item_error(
+                    "inboxes",
+                    idx,
+                    f"classification_set_id {classification_set_id} does not exist in destination.",
+                )
+            app_model_id = _as_int_optional(
+                inv.get("app_model_id"),
+                collection="inboxes",
+                index=idx,
+                field="app_model_id",
+            )
+            if app_model_id is not None:
+                app_model_id = model_id_map.get(app_model_id, app_model_id)
+                if app_model_id not in existing_model_ids:
+                    raise _item_error(
+                        "inboxes",
+                        idx,
+                        f"app_model_id {app_model_id} does not exist in destination.",
+                    )
+            timezone = _as_str_default(inv.get("timezone"), default="UTC")
+            mail_folder = _as_str_default(inv.get("mail_folder"), default="inbox")
+            max_messages_per_run = _as_int_optional(
+                inv.get("max_messages_per_run"),
+                collection="inboxes",
+                index=idx,
+                field="max_messages_per_run",
+            )
+            patch_max_workers = _as_int_required(
+                inv.get("patch_max_workers", 4),
+                collection="inboxes",
+                index=idx,
+                field="patch_max_workers",
+            )
+            polling_interval_minutes = _as_int_required(
+                inv.get("polling_interval_minutes", 5),
+                collection="inboxes",
+                index=idx,
+                field="polling_interval_minutes",
+            )
+            is_active = _as_bool(
+                inv.get("is_active", True),
+                collection="inboxes",
+                index=idx,
+                field="is_active",
+            )
+            graph_write_back_enabled = _as_bool(
+                inv.get("graph_write_back_enabled", True),
+                collection="inboxes",
+                index=idx,
+                field="graph_write_back_enabled",
+            )
+            subject_classify_enabled = _as_bool(
+                inv.get("subject_classify_enabled", False),
+                collection="inboxes",
+                index=idx,
+                field="subject_classify_enabled",
+            )
 
-                if existing:
-                    db.update_inbox(
-                        conn,
-                        inbox_id=int(inv_id),
-                        mailbox_id=str(inv.get("mailbox_id", "")),
-                        prompt_template_id=int(inv.get("prompt_template_id", 0)),
-                        classification_set_id=int(inv.get("classification_set_id", 0)),
-                        app_model_id=inv.get("app_model_id"),
-                        timezone=str(inv.get("timezone", "UTC")),
-                        mail_folder=str(inv.get("mail_folder", "inbox")),
-                        max_messages_per_run=inv.get("max_messages_per_run"),
-                        patch_max_workers=int(inv.get("patch_max_workers", 4)),
-                        polling_interval_minutes=int(inv.get("polling_interval_minutes", 5)),
-                        is_active=bool(inv.get("is_active", True)),
-                        graph_write_back_enabled=bool(inv.get("graph_write_back_enabled", True)),
-                        fetch_filter_json=ff_json,
-                        subject_classify_enabled=bool(inv.get("subject_classify_enabled", False)),
-                        subject_classify_rules_json=sc_rules_json,
-                    )
+            ff_json = None
+            ff = inv.get("fetch_filter")
+            if ff is not None:
+                if isinstance(ff, str):
+                    try:
+                        ff_obj = json.loads(ff)
+                    except Exception as exc:
+                        raise _item_error("inboxes", idx, "fetch_filter must be valid JSON.") from exc
+                elif isinstance(ff, dict):
+                    ff_obj = ff
                 else:
-                    db.create_inbox(
-                        conn,
-                        mailbox_id=str(inv.get("mailbox_id", "")),
-                        prompt_template_id=int(inv.get("prompt_template_id", 0)),
-                        classification_set_id=int(inv.get("classification_set_id", 0)),
-                        app_model_id=inv.get("app_model_id"),
-                        timezone=str(inv.get("timezone", "UTC")),
-                        mail_folder=str(inv.get("mail_folder", "inbox")),
-                        max_messages_per_run=inv.get("max_messages_per_run"),
-                        patch_max_workers=int(inv.get("patch_max_workers", 4)),
-                        polling_interval_minutes=int(inv.get("polling_interval_minutes", 5)),
-                        is_active=bool(inv.get("is_active", True)),
-                        graph_write_back_enabled=bool(inv.get("graph_write_back_enabled", True)),
-                        fetch_filter_json=ff_json,
-                        subject_classify_enabled=bool(inv.get("subject_classify_enabled", False)),
-                        subject_classify_rules_json=sc_rules_json,
-                    )
-                imported["inboxes"] += 1
-            except Exception:
-                pass
+                    raise _item_error("inboxes", idx, "fetch_filter must be an object or JSON string.")
+                try:
+                    ff_json = InboxFetchFilter.model_validate(ff_obj).model_dump_json()
+                except Exception as exc:
+                    raise _item_error("inboxes", idx, f"invalid fetch_filter: {exc}") from exc
+
+            sc_rules_raw = inv.get("subject_classify_rules", [])
+            if sc_rules_raw is None:
+                sc_rules_raw = []
+            if not isinstance(sc_rules_raw, list):
+                raise _item_error("inboxes", idx, "subject_classify_rules must be a list.")
+            parsed_rules: list[SubjectClassifyRule] = []
+            for ridx, rule in enumerate(sc_rules_raw):
+                try:
+                    parsed_rules.append(SubjectClassifyRule.model_validate(rule))
+                except Exception as exc:
+                    raise _item_error(
+                        "inboxes",
+                        idx,
+                        f"subject_classify_rules[{ridx}] is invalid: {exc}",
+                    ) from exc
+            _validate_subject_rules_against_set(
+                conn,
+                classification_set_id,
+                subject_classify_enabled,
+                parsed_rules,
+            )
+            sc_rules_json = _subject_rules_json(parsed_rules)
+
+            if source_id is not None and source_id in existing_inbox_ids:
+                db.update_inbox(
+                    conn,
+                    inbox_id=source_id,
+                    mailbox_id=mailbox_id,
+                    prompt_template_id=prompt_template_id,
+                    classification_set_id=classification_set_id,
+                    app_model_id=app_model_id,
+                    timezone=timezone,
+                    mail_folder=mail_folder,
+                    max_messages_per_run=max_messages_per_run,
+                    patch_max_workers=patch_max_workers,
+                    polling_interval_minutes=polling_interval_minutes,
+                    is_active=is_active,
+                    graph_write_back_enabled=graph_write_back_enabled,
+                    fetch_filter_json=ff_json,
+                    subject_classify_enabled=subject_classify_enabled,
+                    subject_classify_rules_json=sc_rules_json,
+                )
+            else:
+                db.create_inbox(
+                    conn,
+                    mailbox_id=mailbox_id,
+                    prompt_template_id=prompt_template_id,
+                    classification_set_id=classification_set_id,
+                    app_model_id=app_model_id,
+                    timezone=timezone,
+                    mail_folder=mail_folder,
+                    max_messages_per_run=max_messages_per_run,
+                    patch_max_workers=patch_max_workers,
+                    polling_interval_minutes=polling_interval_minutes,
+                    is_active=is_active,
+                    graph_write_back_enabled=graph_write_back_enabled,
+                    fetch_filter_json=ff_json,
+                    subject_classify_enabled=subject_classify_enabled,
+                    subject_classify_rules_json=sc_rules_json,
+                )
+            imported["inboxes"] += 1
 
     return {"imported": imported}
 

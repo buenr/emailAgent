@@ -6,6 +6,7 @@ import {
   apiBaseUrl,
   apiPublicPost,
   getAdminToken,
+  setAdminCookie,
   setAdminToken,
 } from "@/lib/api";
 
@@ -63,7 +64,7 @@ export default function LoginPage() {
         code: "0000",
       })) as { access_token: string };
       setAdminToken(res.access_token);
-      document.cookie = "admin_token=" + res.access_token + "; path=/; SameSite=Strict";
+      setAdminCookie(res.access_token);
       router.replace("/dashboard");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign-in failed");
@@ -100,7 +101,7 @@ export default function LoginPage() {
         code,
       })) as { access_token: string };
       setAdminToken(res.access_token);
-      document.cookie = "admin_token=" + res.access_token + "; path=/; SameSite=Strict";
+      setAdminCookie(res.access_token);
       router.replace("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
