@@ -690,6 +690,71 @@ def trigger_inbox_run(inbox_id: int) -> dict[str, Any]:
     return result
 
 
+@protected.post("/inboxes/{inbox_id}/agentic-run")
+def trigger_inbox_agentic_run(inbox_id: int) -> dict[str, Any]:
+    """Trigger an independent agentic workflow run for the given inbox."""
+    from ..jobs.mailbox_run import run_scheduled_agentic_pipeline
+    from ..jobs.run_lock import is_run_lock_held, release_run_lock, try_acquire_run_lock
+
+    with db.get_connection() as conn:
+        inbox = db.get_inbox_by_id(conn, inbox_id)
+    if not inbox:
+        raise HTTPException(status_code=404, detail="Inbox not found.")
+    if not inbox.get("is_active"):
+        raise HTTPException(status_code=400, detail="Inbox is not active")
+
+    lock_acquired = False
+    if not db.is_demo_mode():
+        if is_run_lock_held(inbox_id):
+            raise HTTPException(status_code=409, detail="A run is already in progress for this inbox")
+        lock_acquired = bool(try_acquire_run_lock(inbox_id))
+        if not lock_acquired:
+            if is_run_lock_held(inbox_id):
+                raise HTTPException(
+                    status_code=409, detail="A run is already in progress for this inbox"
+                )
+            raise HTTPException(
+                status_code=503,
+                detail="Run lock infrastructure unavailable. Configure Redis run locking and retry.",
+            )
+
+    try:
+        summary = run_scheduled_agentic_pipeline(inbox_id)
+    except ValueError as e:
+        msg = str(e)
+        if "not active" in msg.lower():
+            raise HTTPException(status_code=400, detail="Inbox is not active") from e
+        raise HTTPException(status_code=400, detail=msg) from e
+    except RuntimeError as e:
+        msg = str(e)
+        if any(
+            kw in msg
+            for kw in (
+                "AZURE_TENANT_ID",
+                "AZURE_CLIENT_ID",
+                "AZURE_CLIENT_SECRET",
+                "VERTEX_PROJECT",
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                "GOOGLE_CLOUD_API_KEY",
+            )
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Missing credentials: {msg}",
+            ) from e
+        raise HTTPException(status_code=500, detail=msg) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        if lock_acquired:
+            release_run_lock(inbox_id)
+
+    return {
+        "status": "completed",
+        **summary,
+    }
+
+
 @protected.get("/run-logs/{run_log_id}/classifications")
 def get_run_log_classifications(run_log_id: int) -> List[dict[str, Any]]:
     """Return per-email classifications for a specific run log entry."""

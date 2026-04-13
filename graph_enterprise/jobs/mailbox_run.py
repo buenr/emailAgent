@@ -344,46 +344,6 @@ def run_pipeline_stub(
                     else:
                         failures += 1
 
-            # Agentic workflow: config-driven extraction and API calls for matching categories.
-            if mailbox.inbox_id is not None:
-                try:
-                    with db_store.get_connection() as conn:
-                        aw_row = db_store.get_agentic_workflow_for_inbox(conn, mailbox.inbox_id)
-                    if aw_row and aw_row.get("is_active"):
-                        aw_prompt_body = aw_row.get("extraction_prompt_body", "")
-                        with db_store.get_connection() as conn:
-                            all_agent_configs = db_store.get_agent_api_configs(conn)
-                        aw_row["inbox_mailbox_id"] = mailbox.mailbox_id
-                        agent_results = run_agent_workflow(
-                            aw_row,
-                            aw_prompt_body,
-                            messages_work,
-                            pred_list,
-                            all_agent_configs,
-                            mailbox_config=mailbox,
-                            graph_client=client,
-                        )
-                        agent_ok = sum(1 for r in agent_results if r.success)
-                        agent_fail = len(agent_results) - agent_ok
-                        logger.info(
-                            "Agentic workflow completed for %s: %s/%s successful responses",
-                            mailbox.mailbox_id,
-                            agent_ok,
-                            len(agent_results),
-                        )
-                        if agent_fail:
-                            logger.warning(
-                                "Agentic workflow: %s failures out of %s for %s",
-                                agent_fail,
-                                len(agent_results),
-                                mailbox.mailbox_id,
-                            )
-                except Exception as exc:
-                    logger.exception(
-                        "Agentic workflow failed (non-blocking) for %s: %s",
-                        mailbox.mailbox_id,
-                        exc,
-                    )
         except Exception as exc:
             logger.exception("Mailbox pipeline failed: %s", exc)
             status = "Failed"
@@ -416,6 +376,89 @@ def run_pipeline_stub(
     if persist_inbox_id is not None:
         _persist_run_to_db(persist_inbox_id, metrics)
     return metrics
+
+
+def _build_agentic_trigger_predictions(
+    messages: List[Dict[str, Any]],
+    trigger_categories: List[str],
+) -> List[Dict[str, str]]:
+    """Build trigger predictions from existing Outlook categories (independent of classifier output)."""
+    preds: List[Dict[str, str]] = []
+    clean_triggers = [str(x).strip() for x in trigger_categories if str(x).strip()]
+    if not clean_triggers:
+        return preds
+    for msg in messages:
+        mid = str(msg.get("id") or "").strip()
+        if not mid:
+            continue
+        msg_cats = {
+            str(c).strip().lower()
+            for c in (msg.get("categories") or [])
+            if str(c).strip()
+        }
+        if not msg_cats:
+            continue
+        matched: Optional[str] = None
+        for trig in clean_triggers:
+            trig_norm = trig.lower()
+            prefixed = outlook_category_label(trig).lower()
+            if trig_norm in msg_cats or prefixed in msg_cats:
+                matched = trig
+                break
+        if matched:
+            preds.append({"email_id": mid, "category": matched})
+    return preds
+
+
+def run_scheduled_agentic_pipeline(inbox_id: int) -> Dict[str, Any]:
+    """
+    Independent agentic workflow run:
+    fetch messages by inbox filter, then trigger agentic only for messages already
+    tagged/categorized for the configured trigger categories.
+    """
+    mailbox = load_mailbox_config_by_inbox_id(inbox_id)
+    if not mailbox.is_active:
+        raise ValueError(f"Inbox {inbox_id} is not active")
+    if mailbox.inbox_id is None:
+        raise ValueError(f"Inbox {inbox_id} has no persisted configuration id")
+
+    with db_store.get_connection() as conn:
+        aw_row = db_store.get_agentic_workflow_for_inbox(conn, mailbox.inbox_id)
+        all_agent_configs = db_store.get_agent_api_configs(conn)
+    if not aw_row or not aw_row.get("is_active"):
+        raise ValueError(f"No active agentic workflow configured for inbox {inbox_id}")
+
+    provider = _token_provider_from_env()
+    client = GraphHttpClient(provider.acquire_token)
+    try:
+        messages, _ = run_fetch_only(mailbox, provider, graph_client=client)
+        trigger_categories = list(aw_row.get("trigger_categories") or [])
+        predictions = _build_agentic_trigger_predictions(messages, trigger_categories)
+        aw_row["inbox_mailbox_id"] = mailbox.mailbox_id
+        aw_prompt_body = aw_row.get("extraction_prompt_body", "")
+        results = run_agent_workflow(
+            aw_row,
+            aw_prompt_body,
+            messages,
+            predictions,
+            all_agent_configs,
+            mailbox_config=mailbox,
+            graph_client=client,
+        )
+    finally:
+        client.close()
+
+    success = sum(1 for r in results if r.success)
+    failures = len(results) - success
+    drafted = sum(1 for r in results if r.draft_id)
+    return {
+        "fetched_count": len(messages),
+        "triggered_count": len(predictions),
+        "processed_count": len(results),
+        "success_count": success,
+        "failure_count": failures,
+        "drafted_count": drafted,
+    }
 
 
 def run_scheduled_mailbox_pipeline(
