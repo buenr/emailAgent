@@ -10,10 +10,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [ready, setReady] = useState(() => {
-    if (pathname === "/login") return true;
-    return !!getAdminToken();
-  });
+  const [ready, setReady] = useState(false);
+
 
   useEffect(() => {
     if (pathname === "/login") {

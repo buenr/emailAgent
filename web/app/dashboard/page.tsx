@@ -431,7 +431,7 @@ export default function FleetDashboardPage() {
   if (err && rows.length === 0) {
     return (
       <div className="w-full space-y-4">
-        <h1 className="text-2xl font-semibold text-white">Fleet Dashboard</h1>
+        <h1 className="text-2xl font-semibold text-white">Agents Dashboard</h1>
         <Alert variant="destructive">
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>{err}</AlertDescription>
@@ -452,7 +452,7 @@ export default function FleetDashboardPage() {
     <div className="w-full space-y-6">
       {/* ---- Header ---- */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-white">Fleet Dashboard</h1>
+        <h1 className="text-2xl font-semibold text-white">Agents Dashboard</h1>
         <div className="flex flex-wrap items-center gap-4">
           <Button variant="outline" onClick={handleExport}>
             Export Config

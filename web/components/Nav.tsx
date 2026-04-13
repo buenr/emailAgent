@@ -6,18 +6,21 @@ import { clearAdminToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 const links = [
-  { href: "/dashboard", label: "Fleet Dashboard" },
-  { section: "Configuration", items: [
-    { href: "/prompts", label: "Prompt Templates" },
-    { href: "/classifications", label: "Classification Sets" },
-    { href: "/models", label: "App Models" },
-    { href: "/agent-apis", label: "Agent APIs" },
-  ]},
-  { section: "Workflow Builders", items: [
-    { href: "/workflows/classification", label: "Classification Workflows" },
-    { href: "/workflows/agentic", label: "Agentic Workflows" },
-  ]},
-  { href: "/inboxes", label: "Inboxes (Reference)" },
+  { href: "/dashboard", label: "Agents Dashboard" },
+  {
+    section: "Configuration", items: [
+      { href: "/prompts", label: "Prompt Templates" },
+      { href: "/classifications", label: "Classification Sets" },
+      { href: "/models", label: "App Models" },
+      { href: "/agent-apis", label: "Agent APIs" },
+    ]
+  },
+  {
+    section: "Workflow Builders", items: [
+      { href: "/workflows/classification", label: "Classification Workflows" },
+      { href: "/workflows/agentic", label: "Agentic Workflows" },
+    ]
+  },
   { href: "/results", label: "Results & Analytics" },
 ];
 
@@ -42,7 +45,7 @@ export function Nav() {
             return (
               <Link
                 key={link.href}
-                href={link.href}
+                href={link.href as string}
                 aria-current={isActive ? "page" : undefined}
                 className={
                   isActive
@@ -65,7 +68,7 @@ export function Nav() {
                     return (
                       <Link
                         key={item.href}
-                        href={item.href}
+                        href={item.href as string}
                         aria-current={isActive ? "page" : undefined}
                         className={
                           isActive

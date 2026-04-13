@@ -191,10 +191,10 @@ export default function AgenticWorkflowPage() {
     setTriggerCategories(wf.trigger_categories ?? []);
     setFuncDecls(
       wf.function_declarations?.length
-        ? wf.function_declarations
+        ? [wf.function_declarations[0]]
         : [emptyFuncDecl()]
     );
-    setSelectedAgentApis(wf.agent_api_names ?? []);
+    setSelectedAgentApis(wf.agent_api_names?.length ? [wf.agent_api_names[0]] : []);
     setWebhookUrl(wf.webhook_url ?? "");
     setWorkflowFilter(wf.workflow_filter ?? {
       unread_only: false,
@@ -242,7 +242,7 @@ export default function AgenticWorkflowPage() {
         workflow_filter: workflowFilter,
         trigger_categories: triggerCategories,
         function_declarations: cleanFds,
-        agent_api_names: selectedAgentApis,
+        agent_api_names: selectedAgentApis.filter(Boolean),
         webhook_url: webhookUrl.trim() || null,
         auto_send: autoSend,
         is_active: isActive,
@@ -335,9 +335,6 @@ export default function AgenticWorkflowPage() {
       prev.map((fd, i) => (i === idx ? { ...fd, [field]: value } : fd))
     );
   };
-  const addFuncDecl = () => setFuncDecls((prev) => [...prev, emptyFuncDecl()]);
-  const removeFuncDecl = (idx: number) =>
-    setFuncDecls((prev) => prev.filter((_, i) => i !== idx));
 
   const updateParam = (
     fdIdx: number,
@@ -576,168 +573,181 @@ export default function AgenticWorkflowPage() {
                     )}
                   </div>
 
-                  {/* Step 3: Function Declarations */}
+                  {/* Step 3: Agent API & Extraction Schema */}
                   <div className="space-y-4 pb-6 border-b border-slate-700">
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="font-semibold text-lg">
-                          3. Function Declarations
+                          3. Agent API & Extraction Schema
                         </h3>
                         <p className="text-sm text-slate-400">
-                          Define what Gemini should extract via function calling
+                          Select the target API and define what Gemini should
+                          extract for it.
                         </p>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={addFuncDecl}
-                      >
-                        <PlusIcon className="w-4 h-4 mr-1" /> Add Function
-                      </Button>
                     </div>
 
-                    {funcDecls.map((fd, fdIdx) => (
-                      <Card key={fdIdx} className="bg-slate-800/50 border-slate-700">
-                        <CardContent className="pt-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-slate-300">
-                              Function {fdIdx + 1}
-                            </span>
-                            {funcDecls.length > 1 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => removeFuncDecl(fdIdx)}
-                              >
-                                <TrashIcon className="w-4 h-4 text-red-400" />
-                              </Button>
-                            )}
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <Label>Function Name</Label>
-                              <Input
-                                value={fd.name}
-                                onChange={(e) =>
-                                  updateFuncDecl(fdIdx, "name", e.target.value)
-                                }
-                                placeholder="e.g. extract_shipment_info"
-                                className="mt-1"
-                              />
-                            </div>
-                            <div>
-                              <Label>Description</Label>
-                              <Input
-                                value={fd.description}
-                                onChange={(e) =>
-                                  updateFuncDecl(
-                                    fdIdx,
-                                    "description",
-                                    e.target.value
-                                  )
-                                }
-                                placeholder="Extract shipment details from email"
-                                className="mt-1"
-                              />
-                            </div>
-                          </div>
+                    <div className="space-y-4">
+                      <div>
+                        <Label htmlFor="aw-api">Target Agent API</Label>
+                        <Select
+                          value={selectedAgentApis[0] || "none"}
+                          onValueChange={(v) =>
+                            setSelectedAgentApis(v === "none" ? [] : [v])
+                          }
+                        >
+                          <SelectTrigger id="aw-api" className="mt-2 text-blue-400">
+                            <SelectValue placeholder="Select API..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">
+                              None (Extraction Only / Webhook Only)
+                            </SelectItem>
+                            {agentApis.map((api) => (
+                              <SelectItem key={api.name} value={api.name}>
+                                {api.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
 
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <Label className="text-xs text-slate-400">
-                                Parameters
-                              </Label>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => addParam(fdIdx)}
-                              >
-                                <PlusIcon className="w-3 h-3 mr-1" /> Add
-                              </Button>
-                            </div>
-                            {fd.parameters.map((p, pIdx) => (
-                              <div
-                                key={pIdx}
-                                className="grid grid-cols-12 gap-2 items-center"
-                              >
+                      {funcDecls.map((fd, fdIdx) => (
+                        <Card
+                          key={fdIdx}
+                          className="bg-slate-800/50 border-slate-700"
+                        >
+                          <CardContent className="pt-4 space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <Label>Function Name</Label>
                                 <Input
-                                  value={p.name}
+                                  value={fd.name}
                                   onChange={(e) =>
-                                    updateParam(
+                                    updateFuncDecl(
                                       fdIdx,
-                                      pIdx,
                                       "name",
                                       e.target.value
                                     )
                                   }
-                                  placeholder="name"
-                                  className="col-span-3"
+                                  placeholder="e.g. extract_shipment_info"
+                                  className="mt-1"
                                 />
-                                <Select
-                                  value={p.type}
-                                  onValueChange={(v) =>
-                                    updateParam(fdIdx, pIdx, "type", v)
-                                  }
-                                >
-                                  <SelectTrigger className="col-span-2">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="string">
-                                      string
-                                    </SelectItem>
-                                    <SelectItem value="number">
-                                      number
-                                    </SelectItem>
-                                    <SelectItem value="integer">
-                                      integer
-                                    </SelectItem>
-                                    <SelectItem value="boolean">
-                                      boolean
-                                    </SelectItem>
-                                  </SelectContent>
-                                </Select>
+                              </div>
+                              <div>
+                                <Label>Description</Label>
                                 <Input
-                                  value={p.description}
+                                  value={fd.description}
                                   onChange={(e) =>
-                                    updateParam(
+                                    updateFuncDecl(
                                       fdIdx,
-                                      pIdx,
                                       "description",
                                       e.target.value
                                     )
                                   }
-                                  placeholder="description"
-                                  className="col-span-4"
+                                  placeholder="Extract shipment details from email"
+                                  className="mt-1"
                                 />
-                                <div className="col-span-2 flex items-center gap-1">
-                                  <Checkbox
-                                    checked={p.required}
-                                    onCheckedChange={(c) =>
-                                      updateParam(
-                                        fdIdx,
-                                        pIdx,
-                                        "required",
-                                        Boolean(c)
-                                      )
-                                    }
-                                  />
-                                  <span className="text-xs">req</span>
-                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-xs text-slate-400">
+                                  Parameters
+                                </Label>
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="col-span-1"
-                                  onClick={() => removeParam(fdIdx, pIdx)}
+                                  onClick={() => addParam(fdIdx)}
                                 >
-                                  <TrashIcon className="w-3 h-3 text-red-400" />
+                                  <PlusIcon className="w-3 h-3 mr-1" /> Add
                                 </Button>
                               </div>
-                            ))}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                              {fd.parameters.map((p, pIdx) => (
+                                <div
+                                  key={pIdx}
+                                  className="grid grid-cols-12 gap-2 items-center"
+                                >
+                                  <Input
+                                    value={p.name}
+                                    onChange={(e) =>
+                                      updateParam(
+                                        fdIdx,
+                                        pIdx,
+                                        "name",
+                                        e.target.value
+                                      )
+                                    }
+                                    placeholder="name"
+                                    className="col-span-3"
+                                  />
+                                  <Select
+                                    value={p.type}
+                                    onValueChange={(v) =>
+                                      updateParam(fdIdx, pIdx, "type", v)
+                                    }
+                                  >
+                                    <SelectTrigger className="col-span-2">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="string">
+                                        string
+                                      </SelectItem>
+                                      <SelectItem value="number">
+                                        number
+                                      </SelectItem>
+                                      <SelectItem value="integer">
+                                        integer
+                                      </SelectItem>
+                                      <SelectItem value="boolean">
+                                        boolean
+                                      </SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <Input
+                                    value={p.description}
+                                    onChange={(e) =>
+                                      updateParam(
+                                        fdIdx,
+                                        pIdx,
+                                        "description",
+                                        e.target.value
+                                      )
+                                    }
+                                    placeholder="description"
+                                    className="col-span-4"
+                                  />
+                                  <div className="col-span-2 flex items-center gap-1">
+                                    <Checkbox
+                                      checked={p.required}
+                                      onCheckedChange={(c) =>
+                                        updateParam(
+                                          fdIdx,
+                                          pIdx,
+                                          "required",
+                                          Boolean(c)
+                                        )
+                                      }
+                                    />
+                                    <span className="text-xs">req</span>
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="col-span-1"
+                                    onClick={() => removeParam(fdIdx, pIdx)}
+                                  >
+                                    <TrashIcon className="w-3 h-3 text-red-400" />
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Step 4: Response Prompt */}
@@ -957,8 +967,12 @@ export default function AgenticWorkflowPage() {
                     </div>
                   </div>
 
-                  <div className="space-y-4 pb-6 border-b border-slate-700">
-                    <div className="flex items-center gap-2">
+                  {/* Step 6: Automation & Webhook */}
+                  <div className="space-y-4">
+                    <h3 className="font-semibold text-lg">
+                      6. Automation & Webhook (optional)
+                    </h3>
+                    <div className="flex items-center gap-2 pb-2">
                       <Checkbox
                         id="aw-auto-send"
                         checked={autoSend}
@@ -968,59 +982,6 @@ export default function AgenticWorkflowPage() {
                         Auto-send generated draft when available
                       </Label>
                     </div>
-                  </div>
-
-                  {/* Step 6: Agent APIs */}
-                  <div className="space-y-4 pb-6 border-b border-slate-700">
-                    <h3 className="font-semibold text-lg">
-                      6. Agent APIs
-                    </h3>
-                    <p className="text-sm text-slate-400">
-                      Select which external APIs to call sequentially with
-                      extracted data
-                    </p>
-                    {agentApis.length === 0 ? (
-                      <Alert>
-                        <AlertDescription>
-                          No agent APIs configured yet. Go to{" "}
-                          <a href="/agent-apis" className="underline">
-                            Agent APIs
-                          </a>{" "}
-                          to add one.
-                        </AlertDescription>
-                      </Alert>
-                    ) : (
-                      <div className="space-y-2">
-                        {agentApis.map((api) => (
-                          <div
-                            key={api.name}
-                            className="flex items-center gap-3 p-3 border border-slate-700 rounded"
-                          >
-                            <Checkbox
-                              id={`api-${api.name}`}
-                              checked={selectedAgentApis.includes(api.name)}
-                              onCheckedChange={() => toggleAgentApi(api.name)}
-                            />
-                            <Label
-                              htmlFor={`api-${api.name}`}
-                              className="flex-1 cursor-pointer"
-                            >
-                              <div className="font-medium">{api.name}</div>
-                              <div className="text-xs text-slate-400">
-                                {api.api_url}
-                              </div>
-                            </Label>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Step 5: Webhook */}
-                  <div className="space-y-4">
-                    <h3 className="font-semibold text-lg">
-                      5. Webhook Callback (optional)
-                    </h3>
                     <div>
                       <Label htmlFor="aw-webhook">Webhook URL</Label>
                       <Input
