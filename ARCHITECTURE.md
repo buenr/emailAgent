@@ -20,7 +20,8 @@ graph TD
     subgraph Execution ["Orchestration & Jobs"]
         Sched[Scheduler Loop]
         Worker[Celery Worker Pool]
-        Pipeline[mailbox_run.py]
+        ClassifyPipeline[Classification Run]
+        AgenticPipeline[Agentic Run]
     end
 
     subgraph External ["External Integrations"]
@@ -36,16 +37,25 @@ graph TD
     Sched --> SQL
     Sched -- "Enqueue" --> Redis
     Redis -- "Consume" --> Worker
-    Worker --> Pipeline
+    Worker --> ClassifyPipeline
+    API --> ClassifyPipeline
+    API --> AgenticPipeline
 
-    %% Pipeline Flow
-    Pipeline -- "1. Auth" --> Auth
+    %% Classification Flow
+    ClassifyPipeline -- "1. Auth" --> Auth
     Auth -- "Token" --> Graph
-    Pipeline -- "2. Fetch" --> Graph
-    Pipeline -- "3. Subject Rules" --> Subj[Subject Matching]
-    Pipeline -- "4. Classify" --> Gemini
-    Pipeline -- "5. Extract" --> Gemini
-    Pipeline -- "6. Write-back" --> Graph
-    Pipeline -- "7. Callback" --> Webhooks
-    Pipeline -- "8. Record" --> SQL
+    ClassifyPipeline -- "2. Fetch" --> Graph
+    ClassifyPipeline -- "3. Subject Rules" --> Subj[Subject Matching]
+    ClassifyPipeline -- "4. Classify" --> Gemini
+    ClassifyPipeline -- "5. Write-back" --> Graph
+    ClassifyPipeline -- "6. Record" --> SQL
+
+    %% Agentic Flow (independent)
+    AgenticPipeline -- "1. Auth" --> Auth
+    AgenticPipeline -- "2. Fetch" --> Graph
+    AgenticPipeline -- "3. Trigger by existing categories/tags" --> Trigger[Trigger Matcher]
+    AgenticPipeline -- "4. Extract via Function Calling" --> Gemini
+    AgenticPipeline -- "5. Call primary Agent API" --> AgentAPIs
+    AgenticPipeline -- "6. Draft/Send replies" --> Graph
+    AgenticPipeline -- "7. Optional webhook callback" --> Webhooks
 ```
