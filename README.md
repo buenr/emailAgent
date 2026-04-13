@@ -12,7 +12,7 @@ The system features a **Next.js** administration UI backed by a **FastAPI** + **
 - **Advanced fetch filtering**: Configure robust Graph `$filter` and `$search` parameters per inbox (sender allow/deny lists, body keywords, attachment filters, importance levels).
 - **Fleet scheduling**: A dedicated loop and Celery worker pool reliably poll multiple inboxes at custom intervals. Redis-based locking prevents overlapping runs.
 - **Multi-model support**: Assign different Gemini models (for example `gemini-3.1-pro`, `gemini-2.5-flash-lite`) to different inboxes based on complexity requirements.
-- **Agentic workflow integration**: A fully customizable pipeline for extracting structured data from emails using **Gemini Function Calling**. Define arbitrary JSON schemas in the UI, chain multiple sequential API calls, and POST results to webhooks. Includes a built-in **Dry Run Simulator** for testing extraction prompts and schemas.
+- **Agentic workflow integration**: A fully customizable pipeline for extracting structured data from emails using **Gemini Function Calling**. Define arbitrary JSON schemas in the UI, call an external agent API, and generate reply drafts (or auto-send). Includes a built-in **Dry Run Simulator** for testing extraction prompts and schemas.
 - **Modern Web UI**: A high-performance dashboard built with **Next.js 16.2** and **Turbopack**, providing near-instant HMR and 400% faster startup times. Manage prompt templates, custom classification sets, mailbox mappings, subject rules, agent workflows, run logs, and token spend analytics.
 - **Statistics & monitoring**: Real-time token usage trends, classification breakdown by category, run volume metrics, and category histograms for fleet-wide visibility.
 
@@ -134,7 +134,18 @@ curl -X POST http://127.0.0.1:8000/api/inboxes/{inbox_id}/run \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-Returns the `run_log` entry if successful. Useful for testing configuration changes or urgent re-processing without waiting for the next scheduled interval.
+Returns classification run status and `run_id` on success. Useful for testing configuration changes or urgent re-processing without waiting for the next scheduled interval.
+
+### Manual agentic trigger (API)
+
+Run the **agentic workflow independently** for an inbox, using pre-existing message categories/tags (for example emails already tagged `AI/ETA` or `AI-AI/ETA`).
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/inboxes/{inbox_id}/agentic-run \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Returns a summary payload with `fetched_count`, `triggered_count`, `processed_count`, `success_count`, `failure_count`, and `drafted_count`.
 
 ### One-off CLI runs
 
@@ -189,11 +200,11 @@ The UI provides **two separate workflow builders** for different use cases:
 **Purpose**: Extract structured data from emails and call external APIs.
 
 - **Input**: Inbox → Email messages
-- **Processing**: Fetch → Gemini function calling with **configurable schemas** → Sequential agent API chaining → POST to webhook
-- **Output**: Extracted JSON objects, API response logs, webhook callbacks
+- **Processing**: Fetch (independent run) → Match workflow trigger categories from existing Outlook categories → Gemini function calling with **configurable schemas** → Primary agent API call → Draft generation / optional auto-send
+- **Output**: Extracted JSON objects, API responses, and reply drafts
 - **Use case**: Order extraction, ETA processing, automated data entry into ERPs, complex multi-step integrations
 
-**Example**: Monitor a "Logistics" inbox; when an email is classified as `ETAUpdate`, trigger an agentic workflow that extracts `Order #`, `Truck ID`, and `New ETA` into a structured JSON, sends it to your internal Transport Management System (TMS) API, and notifies a Slack webhook.
+**Example**: Run classification on a "Logistics" inbox to label ETA requests. Then run agentic independently on pre-classified/tagged messages to extract `Order #`, `Truck ID`, and `BOL`, call your ETA API, and draft a customer response using your response prompt.
 
 ### Key Differences
 
@@ -263,7 +274,8 @@ When you add or edit an inbox in the UI, configure:
 **Agentic workflows** enable zero-code AI extraction and downstream integration:
 - **Dynamic Schemas**: Define function names and parameters (strings, numbers, booleans) directly in the UI.
 - **Gemini Function Calling**: The system automatically constructs tool definitions for Gemini to ensure 100% schema-compliant extraction.
-- **API Chaining**: Sequentially call multiple external APIs. The results of each call are logged and can be sent to a master webhook.
+- **Independent Execution**: Agentic runs are separate from classification runs and trigger from existing message categories/tags.
+- **Primary Agent API Call**: The workflow invokes the first selected agent API for each triggered message.
 - **Workflow Simulator**: Test your extraction prompts and schemas against mock emails side-by-side before going live.
 
 ### AI models
@@ -323,8 +335,8 @@ Seeded on first run if `default_categories.py` is applied:
 | ------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Authentication      | `graph_enterprise/auth/`                                | MSAL app-only tokens for Microsoft Graph.                                                                                                                                                    |
 | Microsoft Graph     | `graph_enterprise/microsoft_graph/`                     | Paginated `/messages` with `$filter` / `$search`; concurrent PATCH write-back.                                                                                                               |
-| Agent workflows     | `graph_enterprise/agent_workflow/`                      | `orchestrator.py` handles dynamic function calling, API sequence orchestration, and results logging.                                         |
-| API and UI          | `graph_enterprise/api/`, `graph_enterprise/ui/`, `web/` | FastAPI backend (39 endpoints) and Next.js frontend (8 pages) for prompts, classifications, inboxes, models, agent APIs, run logs, and statistics.                                           |
+| Agent workflows     | `graph_enterprise/agent_workflow/`                      | `orchestrator.py` handles dynamic function calling, primary agent API invocation, and reply draft/send orchestration.                                         |
+| API and UI          | `graph_enterprise/api/`, `graph_enterprise/ui/`, `web/` | FastAPI backend and Next.js frontend for prompts, classifications, inboxes, models, agent APIs, run logs, and statistics.                                           |
 
 
 ### End-to-end flow
@@ -333,7 +345,8 @@ Seeded on first run if `default_categories.py` is applied:
 2. **Fetch**: `GraphMessageFetcher` pages messages for the mailbox, folder, and time window (`graph_enterprise/microsoft_graph/fetch.py`).
 3. **Classification** (optional): Subject rules first; then Gemini structured output via `classify_graph_messages` (`gemini_category_batch.py`).
 4. **Write-back** (optional): `patch_message_categories` merges predicted categories onto each message (`graph_enterprise/microsoft_graph/writeback.py`).
-5. **Observability**: Run metrics and records (`graph_enterprise/observability/run_log.py`).
+5. **Agentic run** (independent, optional): Triggered via `/api/inboxes/{id}/agentic-run`, matches existing message categories, extracts structured fields, calls agent API, and creates/sends drafts.
+6. **Observability**: Run metrics and records (`graph_enterprise/observability/run_log.py`).
 
 ### Local defaults and code-first categories
 
