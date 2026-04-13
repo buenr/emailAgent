@@ -361,6 +361,7 @@ def run_pipeline_stub(
                             pred_list,
                             all_agent_configs,
                             mailbox_config=mailbox,
+                            graph_client=client,
                         )
                         agent_ok = sum(1 for r in agent_results if r.success)
                         agent_fail = len(agent_results) - agent_ok

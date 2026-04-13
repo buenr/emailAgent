@@ -1189,6 +1189,18 @@ def _normalize_agentic_row(r: Dict[str, Any]) -> None:
                 r[json_col] = []
         elif raw is None:
             r[json_col] = []
+    raw_filter = r.get("workflow_filter")
+    if isinstance(raw_filter, str):
+        try:
+            r["workflow_filter"] = parse_inbox_fetch_filter(raw_filter).model_dump(mode="json")
+        except Exception:
+            r["workflow_filter"] = None
+    elif raw_filter is None:
+        r["workflow_filter"] = None
+    r["response_prompt_id"] = (
+        int(r["response_prompt_id"]) if r.get("response_prompt_id") is not None else None
+    )
+    r["auto_send"] = bool(r.get("auto_send"))
     for k in ("created_at", "updated_at"):
         v = r.get(k)
         if isinstance(v, datetime):
@@ -1202,7 +1214,8 @@ def list_agentic_workflows(conn: Any) -> List[Dict[str, Any]]:
         conn,
         "SELECT aw.id, aw.inbox_id, aw.name, aw.extraction_prompt_id, "
         "aw.trigger_categories, aw.function_declarations, aw.agent_api_names, "
-        "aw.webhook_url, aw.is_active, aw.created_at, aw.updated_at, "
+        "aw.webhook_url, aw.workflow_filter, aw.response_prompt_id, aw.auto_send, "
+        "aw.is_active, aw.created_at, aw.updated_at, "
         "i.mailbox_id AS inbox_mailbox_id, pt.name AS extraction_prompt_name "
         "FROM agentic_workflow aw "
         "JOIN inbox i ON i.id = aw.inbox_id "
@@ -1222,7 +1235,8 @@ def get_agentic_workflow(conn: Any, workflow_id: int) -> Optional[Dict[str, Any]
         conn,
         "SELECT aw.id, aw.inbox_id, aw.name, aw.extraction_prompt_id, "
         "aw.trigger_categories, aw.function_declarations, aw.agent_api_names, "
-        "aw.webhook_url, aw.is_active, aw.created_at, aw.updated_at, "
+        "aw.webhook_url, aw.workflow_filter, aw.response_prompt_id, aw.auto_send, "
+        "aw.is_active, aw.created_at, aw.updated_at, "
         "i.mailbox_id AS inbox_mailbox_id, pt.name AS extraction_prompt_name "
         "FROM agentic_workflow aw "
         "JOIN inbox i ON i.id = aw.inbox_id "
@@ -1244,10 +1258,12 @@ def get_agentic_workflow_for_inbox(conn: Any, inbox_id: int) -> Optional[Dict[st
         conn,
         "SELECT aw.id, aw.inbox_id, aw.name, aw.extraction_prompt_id, "
         "aw.trigger_categories, aw.function_declarations, aw.agent_api_names, "
-        "aw.webhook_url, aw.is_active, "
-        "pt.body AS extraction_prompt_body "
+        "aw.webhook_url, aw.workflow_filter, aw.response_prompt_id, aw.auto_send, "
+        "aw.is_active, "
+        "pt.body AS extraction_prompt_body, rpt.body AS response_prompt_body "
         "FROM agentic_workflow aw "
         "JOIN prompt_template pt ON pt.id = aw.extraction_prompt_id "
+        "LEFT JOIN prompt_template rpt ON rpt.id = aw.response_prompt_id "
         "WHERE aw.inbox_id = ? AND aw.is_active = 1",
         (inbox_id,),
     )
@@ -1267,6 +1283,9 @@ def create_agentic_workflow(
     function_declarations_json: Optional[str],
     agent_api_names_json: str,
     webhook_url: Optional[str],
+    workflow_filter_json: Optional[str],
+    response_prompt_id: Optional[int],
+    auto_send: bool = False,
     is_active: bool = True,
 ) -> int:
     if _demo(conn):
@@ -1278,6 +1297,9 @@ def create_agentic_workflow(
             function_declarations_json=function_declarations_json,
             agent_api_names_json=agent_api_names_json,
             webhook_url=webhook_url,
+            workflow_filter_json=workflow_filter_json,
+            response_prompt_id=response_prompt_id,
+            auto_send=auto_send,
             is_active=is_active,
         )
     now = _now_iso()
@@ -1285,10 +1307,10 @@ def create_agentic_workflow(
         conn,
         "INSERT INTO agentic_workflow "
         "(inbox_id, name, extraction_prompt_id, trigger_categories, "
-        "function_declarations, agent_api_names, webhook_url, is_active, "
-        "created_at, updated_at) "
+        "function_declarations, agent_api_names, webhook_url, workflow_filter, "
+        "response_prompt_id, auto_send, is_active, created_at, updated_at) "
         "OUTPUT INSERTED.id AS id "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             inbox_id,
             name,
@@ -1297,6 +1319,9 @@ def create_agentic_workflow(
             function_declarations_json,
             agent_api_names_json,
             webhook_url,
+            workflow_filter_json,
+            response_prompt_id,
+            1 if auto_send else 0,
             1 if is_active else 0,
             now,
             now,
@@ -1317,6 +1342,9 @@ def update_agentic_workflow(
     function_declarations_json: Optional[str],
     agent_api_names_json: str,
     webhook_url: Optional[str],
+    workflow_filter_json: Optional[str],
+    response_prompt_id: Optional[int],
+    auto_send: bool = False,
     is_active: bool = True,
 ) -> None:
     if _demo(conn):
@@ -1329,6 +1357,9 @@ def update_agentic_workflow(
             function_declarations_json=function_declarations_json,
             agent_api_names_json=agent_api_names_json,
             webhook_url=webhook_url,
+            workflow_filter_json=workflow_filter_json,
+            response_prompt_id=response_prompt_id,
+            auto_send=auto_send,
             is_active=is_active,
         )
         return
@@ -1336,7 +1367,8 @@ def update_agentic_workflow(
         conn,
         "UPDATE agentic_workflow SET inbox_id = ?, name = ?, extraction_prompt_id = ?, "
         "trigger_categories = ?, function_declarations = ?, agent_api_names = ?, "
-        "webhook_url = ?, is_active = ?, updated_at = ? WHERE id = ?",
+        "webhook_url = ?, workflow_filter = ?, response_prompt_id = ?, auto_send = ?, "
+        "is_active = ?, updated_at = ? WHERE id = ?",
         (
             inbox_id,
             name,
@@ -1345,6 +1377,9 @@ def update_agentic_workflow(
             function_declarations_json,
             agent_api_names_json,
             webhook_url,
+            workflow_filter_json,
+            response_prompt_id,
+            1 if auto_send else 0,
             1 if is_active else 0,
             _now_iso(),
             workflow_id,

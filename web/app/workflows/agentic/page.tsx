@@ -12,6 +12,7 @@ import type {
   DryRunResult,
   PaginatedResponse,
   ClassificationSetDetail,
+  FetchFilter,
 } from "@/lib/types";
 import { toast } from "sonner";
 import { PlayIcon, PlusIcon, TrashIcon, FlaskConical } from "lucide-react";
@@ -67,6 +68,22 @@ export default function AgenticWorkflowPage() {
   ]);
   const [selectedAgentApis, setSelectedAgentApis] = useState<string[]>([]);
   const [webhookUrl, setWebhookUrl] = useState("");
+  const [responsePromptId, setResponsePromptId] = useState<number | null>(null);
+  const [workflowFilter, setWorkflowFilter] = useState<FetchFilter>({
+    unread_only: false,
+    time_window_mode: "local_today",
+    rolling_hours: null,
+    sender_allowlist: [],
+    sender_denylist: [],
+    subject_keywords: [],
+    subject_keyword_mode: "any",
+    body_keywords: [],
+    importance_levels: [],
+    has_attachments: "any",
+    category_include_any: [],
+    category_exclude_any: [],
+  });
+  const [autoSend, setAutoSend] = useState(false);
   const [isActive, setIsActive] = useState(true);
 
   // Dry run
@@ -92,8 +109,9 @@ export default function AgenticWorkflowPage() {
       setPrompts(promptsRes ?? []);
       setAgentApis(apisRes ?? []);
 
-      if ((wfRes ?? []).length > 0) {
-        setSelectedId(wfRes[0].id);
+      const firstWorkflow = (wfRes ?? [])[0];
+      if (firstWorkflow?.id != null) {
+        setSelectedId(firstWorkflow.id);
       } else {
         setSelectedId("new");
       }
@@ -133,10 +151,26 @@ export default function AgenticWorkflowPage() {
     setInboxId(null);
     setWorkflowName("");
     setPromptId(null);
+    setResponsePromptId(null);
     setTriggerCategories([]);
     setFuncDecls([emptyFuncDecl()]);
     setSelectedAgentApis([]);
     setWebhookUrl("");
+    setWorkflowFilter({
+      unread_only: false,
+      time_window_mode: "local_today",
+      rolling_hours: null,
+      sender_allowlist: [],
+      sender_denylist: [],
+      subject_keywords: [],
+      subject_keyword_mode: "any",
+      body_keywords: [],
+      importance_levels: [],
+      has_attachments: "any",
+      category_include_any: [],
+      category_exclude_any: [],
+    });
+    setAutoSend(false);
     setIsActive(true);
     setDryRunResult(null);
   }, []);
@@ -153,6 +187,7 @@ export default function AgenticWorkflowPage() {
     setInboxId(wf.inbox_id);
     setWorkflowName(wf.name ?? "");
     setPromptId(wf.extraction_prompt_id);
+    setResponsePromptId(wf.response_prompt_id ?? null);
     setTriggerCategories(wf.trigger_categories ?? []);
     setFuncDecls(
       wf.function_declarations?.length
@@ -161,6 +196,21 @@ export default function AgenticWorkflowPage() {
     );
     setSelectedAgentApis(wf.agent_api_names ?? []);
     setWebhookUrl(wf.webhook_url ?? "");
+    setWorkflowFilter(wf.workflow_filter ?? {
+      unread_only: false,
+      time_window_mode: "local_today",
+      rolling_hours: null,
+      sender_allowlist: [],
+      sender_denylist: [],
+      subject_keywords: [],
+      subject_keyword_mode: "any",
+      body_keywords: [],
+      importance_levels: [],
+      has_attachments: "any",
+      category_include_any: [],
+      category_exclude_any: [],
+    });
+    setAutoSend(wf.auto_send ?? false);
     setIsActive(wf.is_active ?? true);
     setDryRunResult(null);
   }, [selectedId, workflows, resetForm]);
@@ -188,10 +238,13 @@ export default function AgenticWorkflowPage() {
         inbox_id: inboxId,
         name: workflowName.trim(),
         extraction_prompt_id: promptId,
+        response_prompt_id: responsePromptId,
+        workflow_filter: workflowFilter,
         trigger_categories: triggerCategories,
         function_declarations: cleanFds,
         agent_api_names: selectedAgentApis,
         webhook_url: webhookUrl.trim() || null,
+        auto_send: autoSend,
         is_active: isActive,
       };
 
@@ -257,6 +310,19 @@ export default function AgenticWorkflowPage() {
     setSelectedAgentApis((prev) =>
       prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
     );
+  };
+
+  const parseCsv = (value: string): string[] =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const updateWorkflowFilter = <K extends keyof FetchFilter>(
+    field: K,
+    value: FetchFilter[K]
+  ) => {
+    setWorkflowFilter((prev) => ({ ...prev, [field]: value }));
   };
 
   // Function declaration helpers
@@ -674,10 +740,240 @@ export default function AgenticWorkflowPage() {
                     ))}
                   </div>
 
-                  {/* Step 4: Agent APIs */}
+                  {/* Step 4: Response Prompt */}
                   <div className="space-y-4 pb-6 border-b border-slate-700">
                     <h3 className="font-semibold text-lg">
-                      4. Agent APIs
+                      4. Response Prompt
+                    </h3>
+                    <p className="text-sm text-slate-400">
+                      Optional second prompt used to turn API results into a draft reply.
+                    </p>
+                    <div>
+                      <Label htmlFor="aw-response-prompt">Response Prompt</Label>
+                      <Select
+                        value={String(responsePromptId ?? "")}
+                        onValueChange={(v) =>
+                          setResponsePromptId(v ? Number(v) : null)
+                        }
+                      >
+                        <SelectTrigger
+                          id="aw-response-prompt"
+                          className="mt-2"
+                        >
+                          <SelectValue placeholder="None" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">None</SelectItem>
+                          {prompts.map((p) => (
+                            <SelectItem key={p.id} value={String(p.id)}>
+                              {p.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Step 5: Workflow Filter */}
+                  <div className="space-y-4 pb-6 border-b border-slate-700">
+                    <h3 className="font-semibold text-lg">
+                      5. Workflow Filter
+                    </h3>
+                    <p className="text-sm text-slate-400">
+                      Only run this workflow on emails that meet these criteria.
+                    </p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="wf-unread-only"
+                          checked={workflowFilter.unread_only}
+                          onCheckedChange={(c) =>
+                            updateWorkflowFilter("unread_only", Boolean(c))
+                          }
+                        />
+                        <Label htmlFor="wf-unread-only" className="cursor-pointer">
+                          Unread only
+                        </Label>
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-has-attachments">Attachments</Label>
+                        <Select
+                          value={workflowFilter.has_attachments}
+                          onValueChange={(value) =>
+                            updateWorkflowFilter(
+                              "has_attachments",
+                              value as FetchFilter["has_attachments"]
+                            )
+                          }
+                        >
+                          <SelectTrigger
+                            id="wf-has-attachments"
+                            className="mt-2"
+                          >
+                            <SelectValue placeholder="Any" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="any">Any</SelectItem>
+                            <SelectItem value="yes">Yes</SelectItem>
+                            <SelectItem value="no">No</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-sender-allowlist">Sender allowlist</Label>
+                        <Input
+                          id="wf-sender-allowlist"
+                          value={workflowFilter.sender_allowlist.join(", ")}
+                          onChange={(e) =>
+                            updateWorkflowFilter(
+                              "sender_allowlist",
+                              parseCsv(e.target.value)
+                            )
+                          }
+                          placeholder="comma-separated email addresses or domains"
+                          className="mt-2"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-sender-denylist">Sender denylist</Label>
+                        <Input
+                          id="wf-sender-denylist"
+                          value={workflowFilter.sender_denylist.join(", ")}
+                          onChange={(e) =>
+                            updateWorkflowFilter(
+                              "sender_denylist",
+                              parseCsv(e.target.value)
+                            )
+                          }
+                          placeholder="comma-separated email addresses or domains"
+                          className="mt-2"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-subject-keywords">
+                          Subject keywords
+                        </Label>
+                        <Input
+                          id="wf-subject-keywords"
+                          value={workflowFilter.subject_keywords.join(", ")}
+                          onChange={(e) =>
+                            updateWorkflowFilter(
+                              "subject_keywords",
+                              parseCsv(e.target.value)
+                            )
+                          }
+                          placeholder="comma-separated keywords"
+                          className="mt-2"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-subject-mode">
+                          Subject keyword mode
+                        </Label>
+                        <Select
+                          value={workflowFilter.subject_keyword_mode}
+                          onValueChange={(value) =>
+                            updateWorkflowFilter(
+                              "subject_keyword_mode",
+                              value as FetchFilter["subject_keyword_mode"]
+                            )
+                          }
+                        >
+                          <SelectTrigger id="wf-subject-mode" className="mt-2">
+                            <SelectValue placeholder="Any" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="any">Any</SelectItem>
+                            <SelectItem value="all">All</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-body-keywords">Body keywords</Label>
+                        <Input
+                          id="wf-body-keywords"
+                          value={workflowFilter.body_keywords.join(", ")}
+                          onChange={(e) =>
+                            updateWorkflowFilter(
+                              "body_keywords",
+                              parseCsv(e.target.value)
+                            )
+                          }
+                          placeholder="comma-separated keywords"
+                          className="mt-2"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-importance-levels">
+                          Importance levels
+                        </Label>
+                        <Input
+                          id="wf-importance-levels"
+                          value={workflowFilter.importance_levels.join(", ")}
+                          onChange={(e) =>
+                            updateWorkflowFilter(
+                              "importance_levels",
+                              parseCsv(e.target.value)
+                            )
+                          }
+                          placeholder="comma-separated levels (low, normal, high)"
+                          className="mt-2"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-category-include-any">
+                          Include categories
+                        </Label>
+                        <Input
+                          id="wf-category-include-any"
+                          value={workflowFilter.category_include_any.join(", ")}
+                          onChange={(e) =>
+                            updateWorkflowFilter(
+                              "category_include_any",
+                              parseCsv(e.target.value)
+                            )
+                          }
+                          placeholder="comma-separated categories"
+                          className="mt-2"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="wf-category-exclude-any">
+                          Exclude categories
+                        </Label>
+                        <Input
+                          id="wf-category-exclude-any"
+                          value={workflowFilter.category_exclude_any.join(", ")}
+                          onChange={(e) =>
+                            updateWorkflowFilter(
+                              "category_exclude_any",
+                              parseCsv(e.target.value)
+                            )
+                          }
+                          placeholder="comma-separated categories"
+                          className="mt-2"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pb-6 border-b border-slate-700">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="aw-auto-send"
+                        checked={autoSend}
+                        onCheckedChange={(c) => setAutoSend(Boolean(c))}
+                      />
+                      <Label htmlFor="aw-auto-send" className="cursor-pointer">
+                        Auto-send generated draft when available
+                      </Label>
+                    </div>
+                  </div>
+
+                  {/* Step 6: Agent APIs */}
+                  <div className="space-y-4 pb-6 border-b border-slate-700">
+                    <h3 className="font-semibold text-lg">
+                      6. Agent APIs
                     </h3>
                     <p className="text-sm text-slate-400">
                       Select which external APIs to call sequentially with

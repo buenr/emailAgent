@@ -218,6 +218,9 @@ export type AgenticWorkflow = {
   inbox_id: number;
   name: string;
   extraction_prompt_id: number;
+  response_prompt_id?: number | null;
+  workflow_filter?: FetchFilter | null;
+  auto_send?: boolean;
   trigger_categories: string[];
   function_declarations: FunctionDeclarationConfig[];
   agent_api_names: string[];

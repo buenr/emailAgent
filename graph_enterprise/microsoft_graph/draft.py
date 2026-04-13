@@ -125,3 +125,22 @@ def create_reply_draft(
     except Exception as exc:
         logger.warning("Failed to patch draft body for draft %s: %s", draft_id, exc)
         return None
+
+
+def send_draft(
+    client: GraphHttpClient,
+    mailbox_id: str,
+    draft_id: str,
+) -> bool:
+    """Send an existing draft message via Microsoft Graph."""
+    encoded_mailbox = urllib.parse.quote(mailbox_id, safe="")
+    encoded_draft = urllib.parse.quote(draft_id, safe="")
+    send_url = f"{GRAPH_ROOT}/users/{encoded_mailbox}/messages/{encoded_draft}/send"
+
+    try:
+        resp = client.post(send_url, json_body={})
+        resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.warning("Failed to send draft %s for mailbox %s: %s", draft_id, mailbox_id, exc)
+        return False

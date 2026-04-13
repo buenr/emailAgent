@@ -888,10 +888,13 @@ class AgenticWorkflowCreate(BaseModel):
     inbox_id: int = Field(..., ge=1)
     name: str = ""
     extraction_prompt_id: int = Field(..., ge=1)
+    response_prompt_id: Optional[int] = None
+    workflow_filter: Optional[InboxFetchFilter] = None
     trigger_categories: List[str] = Field(..., min_length=1)
     function_declarations: List[FunctionDeclarationSchema] = Field(default_factory=list)
     agent_api_names: List[str] = Field(default_factory=list)
     webhook_url: Optional[str] = None
+    auto_send: bool = False
     is_active: bool = True
 
 
@@ -899,10 +902,13 @@ class AgenticWorkflowUpdate(BaseModel):
     inbox_id: int = Field(..., ge=1)
     name: str = ""
     extraction_prompt_id: int = Field(..., ge=1)
+    response_prompt_id: Optional[int] = None
+    workflow_filter: Optional[InboxFetchFilter] = None
     trigger_categories: List[str] = Field(..., min_length=1)
     function_declarations: List[FunctionDeclarationSchema] = Field(default_factory=list)
     agent_api_names: List[str] = Field(default_factory=list)
     webhook_url: Optional[str] = None
+    auto_send: bool = False
     is_active: bool = True
 
 
@@ -942,6 +948,9 @@ def create_agentic_workflow(payload: AgenticWorkflowCreate) -> dict[str, int]:
                 function_declarations_json=json.dumps(func_decls) if func_decls else None,
                 agent_api_names_json=json.dumps(payload.agent_api_names),
                 webhook_url=(payload.webhook_url or "").strip() or None,
+                workflow_filter_json=(payload.workflow_filter.model_dump_json() if payload.workflow_filter is not None else None),
+                response_prompt_id=payload.response_prompt_id,
+                auto_send=payload.auto_send,
                 is_active=payload.is_active,
             )
         return {"id": new_id}
@@ -969,6 +978,9 @@ def update_agentic_workflow(workflow_id: int, payload: AgenticWorkflowUpdate) ->
                 function_declarations_json=json.dumps(func_decls) if func_decls else None,
                 agent_api_names_json=json.dumps(payload.agent_api_names),
                 webhook_url=(payload.webhook_url or "").strip() or None,
+                workflow_filter_json=(payload.workflow_filter.model_dump_json() if payload.workflow_filter is not None else None),
+                response_prompt_id=payload.response_prompt_id,
+                auto_send=payload.auto_send,
                 is_active=payload.is_active,
             )
         return {"status": "ok"}

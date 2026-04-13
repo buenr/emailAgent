@@ -1054,6 +1054,18 @@ def _normalize_agentic_json(r: Dict[str, Any]) -> None:
                 r[col] = []
         elif raw is None:
             r[col] = []
+    raw_filter = r.get("workflow_filter")
+    if isinstance(raw_filter, str):
+        try:
+            r["workflow_filter"] = json.loads(raw_filter)
+        except Exception:
+            r["workflow_filter"] = None
+    elif raw_filter is None:
+        r["workflow_filter"] = None
+    r["response_prompt_id"] = (
+        int(r["response_prompt_id"]) if r.get("response_prompt_id") is not None else None
+    )
+    r["auto_send"] = bool(r.get("auto_send"))
 
 
 def list_agentic_workflows() -> List[Dict[str, Any]]:
@@ -1093,6 +1105,9 @@ def get_agentic_workflow_for_inbox(inbox_id: int) -> Optional[Dict[str, Any]]:
                 r = dict(w)
                 pt = _prompt_by_id(int(r["extraction_prompt_id"]))
                 r["extraction_prompt_body"] = pt["body"] if pt else ""
+                if r.get("response_prompt_id") is not None:
+                    rpt = _prompt_by_id(int(r["response_prompt_id"]))
+                    r["response_prompt_body"] = rpt["body"] if rpt else ""
                 _normalize_agentic_json(r)
                 return r
     return None
@@ -1107,6 +1122,9 @@ def create_agentic_workflow(
     function_declarations_json: Optional[str],
     agent_api_names_json: str,
     webhook_url: Optional[str],
+    workflow_filter_json: Optional[str],
+    response_prompt_id: Optional[int],
+    auto_send: bool = False,
     is_active: bool = True,
 ) -> int:
     with _lock:
@@ -1114,6 +1132,8 @@ def create_agentic_workflow(
             raise DemoIntegrityError("inbox fk")
         if not _prompt_by_id(extraction_prompt_id):
             raise DemoIntegrityError("prompt fk")
+        if response_prompt_id is not None and not _prompt_by_id(response_prompt_id):
+            raise DemoIntegrityError("response prompt fk")
         now = _now_iso()
         wid = _state["next_id"]["agentic"]
         _state["next_id"]["agentic"] += 1
@@ -1126,6 +1146,9 @@ def create_agentic_workflow(
             "function_declarations": function_declarations_json,
             "agent_api_names": agent_api_names_json,
             "webhook_url": webhook_url,
+            "workflow_filter": workflow_filter_json,
+            "response_prompt_id": response_prompt_id,
+            "auto_send": auto_send,
             "is_active": is_active,
             "created_at": now,
             "updated_at": now,
@@ -1143,12 +1166,17 @@ def update_agentic_workflow(
     function_declarations_json: Optional[str],
     agent_api_names_json: str,
     webhook_url: Optional[str],
+    workflow_filter_json: Optional[str],
+    response_prompt_id: Optional[int],
+    auto_send: bool = False,
     is_active: bool = True,
 ) -> None:
     with _lock:
         w = _agentic_by_id(workflow_id)
         if not w:
             raise KeyError(workflow_id)
+        if response_prompt_id is not None and not _prompt_by_id(response_prompt_id):
+            raise DemoIntegrityError("response prompt fk")
         w.update({
             "inbox_id": inbox_id,
             "name": name,
@@ -1157,6 +1185,9 @@ def update_agentic_workflow(
             "function_declarations": function_declarations_json,
             "agent_api_names": agent_api_names_json,
             "webhook_url": webhook_url,
+            "workflow_filter": workflow_filter_json,
+            "response_prompt_id": response_prompt_id,
+            "auto_send": auto_send,
             "is_active": is_active,
             "updated_at": _now_iso(),
         })
