@@ -201,7 +201,9 @@ export default function ClassificationsPage() {
             }}
           >
             <SelectTrigger className="w-full max-w-md" aria-labelledby="classification-set-select-label">
-              <SelectValue placeholder="Select a set" />
+              <SelectValue placeholder="Select a set">
+                {selectedId === "new" ? "+ Create New Set" : sets.find(s => s.id === selectedId)?.name}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {sets.map((s) => (

@@ -21,8 +21,7 @@ const links = [
       { href: "/workflows/agentic", label: "Agentic Workflows" },
     ]
   },
-  { href: "/results", label: "Results & Analytics" },
-];
+  ];
 
 export function Nav() {
   const pathname = usePathname();

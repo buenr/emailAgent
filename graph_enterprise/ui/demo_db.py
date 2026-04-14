@@ -956,65 +956,8 @@ def insert_message_classifications(
             )
 
 
-def list_message_classifications_by_run(
-    run_log_id: int,
-) -> List[Dict[str, Any]]:
-    """Return all message_classification rows for a given run_log entry."""
-    with _lock:
-        return [
-            dict(mc)
-            for mc in _state["message_classifications"]
-            if int(mc["run_log_id"]) == run_log_id
-        ]
 
 
-def list_message_classifications_by_inbox(
-    inbox_id: int,
-    category: Optional[str] = None,
-    since: Optional[str] = None,
-    until: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 25,
-) -> Dict[str, Any]:
-    """Return {items: [...], total: N, page: n, page_size: n} for message classifications under an inbox."""
-    with _lock:
-        # Find run_log ids belonging to this inbox
-        run_log_ids: set[int] = set()
-        for lg in _state["run_logs"]:
-            if int(lg["inbox_id"]) == inbox_id:
-                run_log_ids.add(int(lg["id"]))
-        rows = [
-            dict(mc)
-            for mc in _state["message_classifications"]
-            if int(mc["run_log_id"]) in run_log_ids
-        ]
-        if category is not None and category.strip():
-            rows = [r for r in rows if str(r.get("category", "")) == category.strip()]
-        if since is not None and since.strip():
-            since_dt = _parse_utc(since.strip())
-            if since_dt is not None:
-                rows = [
-                    r
-                    for r in rows
-                    if _parse_utc(r.get("created_at")) is not None
-                    and _parse_utc(r.get("created_at")) >= since_dt
-                ]
-        if until is not None and until.strip():
-            until_dt = _parse_utc(until.strip())
-            if until_dt is not None:
-                rows = [
-                    r
-                    for r in rows
-                    if _parse_utc(r.get("created_at")) is not None
-                    and _parse_utc(r.get("created_at")) <= until_dt
-                ]
-        total = len(rows)
-        # Server-side pagination
-        page = max(1, int(page))
-        page_size = max(1, min(int(page_size), 200))
-        offset = (page - 1) * page_size
-        paged = rows[offset : offset + page_size]
-        return {"items": paged, "total": total, "page": page, "page_size": page_size}
 
 
 def list_distinct_categories_by_inbox(inbox_id: int) -> List[str]:

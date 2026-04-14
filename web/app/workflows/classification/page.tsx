@@ -14,7 +14,6 @@ import type {
   ClassificationSetDetail,
   AppModelRow,
   RunLogRow,
-  ClassificationRow,
   PaginatedResponse,
 } from "@/lib/types";
 import { toast } from "sonner";
@@ -179,8 +178,6 @@ export default function ClassificationWorkflowPage() {
   const [runLogs, setRunLogs] = useState<RunLogRow[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logDetail, setLogDetail] = useState<RunLogRow | null>(null);
-  const [logClassifications, setLogClassifications] = useState<ClassificationRow[]>([]);
-  const [logClassificationsLoading, setLogClassificationsLoading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [runNowDialogOpen, setRunNowDialogOpen] = useState(false);
   const [runNowLoading, setRunNowLoading] = useState(false);
@@ -374,29 +371,6 @@ export default function ClassificationWorkflowPage() {
     };
   }, [selectedId]);
 
-  useEffect(() => {
-    if (!logDetail) {
-      setLogClassifications([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      setLogClassificationsLoading(true);
-      try {
-        const rows = await apiGet<ClassificationRow[]>(
-          `/api/run-logs/${logDetail.id}/classifications`
-        );
-        if (!cancelled) setLogClassifications(rows);
-      } catch {
-        if (!cancelled) setLogClassifications([]);
-      } finally {
-        if (!cancelled) setLogClassificationsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [logDetail]);
 
   useEffect(() => {
     if (!setId) {
@@ -616,42 +590,6 @@ export default function ClassificationWorkflowPage() {
             </Alert>
           )}
 
-          {logClassificationsLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-8 w-full" />
-            </div>
-          ) : logClassifications.length > 0 ? (
-            <div>
-              <h4 className="mb-2 text-sm font-medium text-slate-300">
-                Classifications ({logClassifications.length})
-              </h4>
-              <div className="max-h-[240px] overflow-y-auto rounded-lg border border-slate-800">
-                <ShadcnTable>
-                  <ShadcnTableHeader>
-                    <ShadcnTableRow className="bg-slate-900/50 hover:bg-slate-900/50">
-                      <ShadcnTableHead className="text-xs text-slate-400">Subject</ShadcnTableHead>
-                      <ShadcnTableHead className="text-xs text-slate-400">Sender</ShadcnTableHead>
-                      <ShadcnTableHead className="text-xs text-slate-400">Category</ShadcnTableHead>
-                    </ShadcnTableRow>
-                  </ShadcnTableHeader>
-                  <ShadcnTableBody>
-                    {logClassifications.map((c) => (
-                      <ShadcnTableRow key={c.id}>
-                        <ShadcnTableCell className="max-w-[200px] truncate text-sm text-slate-200">{c.subject || "—"}</ShadcnTableCell>
-                        <ShadcnTableCell className="text-sm text-slate-300">{c.sender || "—"}</ShadcnTableCell>
-                        <ShadcnTableCell className="text-sm">
-                          <span className="inline-flex items-center rounded-md bg-indigo-500/15 px-1.5 py-0.5 text-xs font-medium text-indigo-300">
-                            {c.category}
-                          </span>
-                        </ShadcnTableCell>
-                      </ShadcnTableRow>
-                    ))}
-                  </ShadcnTableBody>
-                </ShadcnTable>
-              </div>
-            </div>
-          ) : null}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setLogDetail(null)}>Close</Button>
@@ -764,7 +702,9 @@ export default function ClassificationWorkflowPage() {
                         <Label>Prompt Template</Label>
                         <Select value={String(promptId)} onValueChange={(val) => val && setPromptId(Number(val))}>
                           <SelectTrigger className="mt-2">
-                            <SelectValue placeholder="Select template..." />
+                            <SelectValue placeholder="Select template...">
+                              {prompts.find(p => p.id === promptId)?.name}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             {prompts.map((p) => (
@@ -778,7 +718,9 @@ export default function ClassificationWorkflowPage() {
                         <Label>Classification Set</Label>
                         <Select value={String(setId)} onValueChange={(val) => val && setSetId(Number(val))}>
                           <SelectTrigger className="mt-2">
-                            <SelectValue placeholder="Select set..." />
+                            <SelectValue placeholder="Select set...">
+                              {sets.find(s => s.id === setId)?.name}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             {sets.map((s) => (
@@ -797,7 +739,9 @@ export default function ClassificationWorkflowPage() {
                           }}
                         >
                           <SelectTrigger className="mt-2">
-                            <SelectValue />
+                            <SelectValue>
+                              {appModelId === null ? "Default Strategy (Lite / ENV)" : appModels.find(m => m.id === appModelId)?.name}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">Default Strategy (Lite / ENV)</SelectItem>

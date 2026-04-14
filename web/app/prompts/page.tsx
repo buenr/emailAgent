@@ -256,7 +256,9 @@ export default function PromptsPage() {
             }}
           >
             <SelectTrigger className="w-full max-w-md">
-              <SelectValue placeholder="Select template" />
+              <SelectValue placeholder="Select template">
+                {selectedId === "new" ? "+ Create New Template" : selected?.name}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="new">+ Create New Template</SelectItem>

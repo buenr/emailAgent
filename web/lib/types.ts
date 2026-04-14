@@ -183,19 +183,6 @@ export type RunLogRow = {
   created_at: string;
 };
 
-export type ClassificationRow = {
-  id: number;
-  run_log_id: number;
-  email_id: string;
-  subject: string;
-  sender: string;
-  category: string;
-  received_at: string;
-  created_at: string;
-};
-
-export type ClassificationsResponse = PaginatedResponse<ClassificationRow>;
-
 /* ------------------------------------------------------------------ */
 /*  Agentic workflow types                                             */
 /* ------------------------------------------------------------------ */
